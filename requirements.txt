@@ -17,3 +17,5 @@ psutil>=5.9
 # (используется только если data/sources.txt заполнен пользователем)
 nodriver>=0.38
 websockets==13.1
+
+PyQt6-WebEngine>=6.6
