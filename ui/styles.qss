@@ -1,0 +1,162 @@
+/* ==============================================================================
+   ДИЗАЙН-СИСТЕМА AMAGI-PLAYER (ZOOOMER SPACE PRO MATTE 10.0)
+   ============================================================================== */
+
+* {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+}
+
+/* ==============================================================================
+   1. ГЛОБАЛЬНАЯ ТЕМНАЯ OLED ТЕМА (ПО УМОЛЧАНИЮ / [theme="dark"])
+   ============================================================================== */
+
+QMainWindow, QStackedWidget, QScrollArea, QWidget#gridContainer {
+    background-color: #000000;
+}
+QWidget#headerBar {
+    background-color: rgba(0, 0, 0, 0.7);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+QLineEdit#searchBar {
+    background-color: #000000;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 12px;
+    padding: 10px 16px;
+    color: #FFFFFF;
+    font-size: 13px;
+}
+QLineEdit#searchBar:focus {
+    border: 1px solid #FFFFFF;
+    background-color: #050505;
+}
+QLabel#logoLabel { color: #FFFFFF; font-size: 22px; font-weight: 900; letter-spacing: 5px; }
+QLabel#sectionTitle { color: #FFFFFF; font-size: 14px; font-weight: 800; letter-spacing: 2.5px; }
+
+MovieCardWidget {
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 24px;
+}
+QLabel#coverPlaceholder { border-radius: 18px; background-color: rgba(0, 0, 0, 0.2); }
+MovieCardWidget QLabel, MovieDetailsWidget QLabel { color: #FFFFFF; }
+
+QPushButton#actionButton, QPushButton#islandActionButton {
+    background-color: #FFFFFF; color: #000000; border: none; border-radius: 12px; padding: 10px 22px; font-weight: 700;
+}
+QPushButton#sysButton {
+    background-color: transparent; border: 1px solid rgba(255, 255, 255, 0.15); color: rgba(255, 255, 255, 0.6); border-radius: 12px; padding: 8px 16px;
+}
+QPushButton#sysButton:hover { border: 1px solid #FFFFFF; color: #FFFFFF; background-color: rgba(255, 255, 255, 0.05); }
+QPushButton#languageButton { background-color: transparent; color: rgba(255, 255, 255, 0.75); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 12px; }
+QFrame#continueIsland { background-color: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 24px; }
+QPushButton#closeIslandButton { background-color: transparent; color: rgba(255, 255, 255, 0.3); border: none; font-size: 18px; }
+
+
+/* ==============================================================================
+   2. ДИНАМИЧЕСКАЯ СВЕТЛАЯ ТЕМА (APPLE SPACE GRAY PRO)
+   ============================================================================== */
+
+/* Дорогой глубокий индастриал градиент Space Gray на все подложки */
+*[theme="light"],
+*[theme="light"] QMainWindow, 
+*[theme="light"] QWidget,
+*[theme="light"] QStackedWidget, 
+*[theme="light"] QScrollArea, 
+*[theme="light"] QWidget#gridContainer {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #424752, stop:1 #23262B);
+    border: none;
+}
+
+/* ШАПКА В СТИЛЕ MAC OS */
+*[theme="light"] QWidget#headerBar {
+    background-color: rgba(255, 255, 255, 0.03);
+    border-bottom: 2px solid rgba(255, 255, 255, 0.12);
+}
+
+*[theme="light"] QLineEdit#searchBar {
+    background-color: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 20px;
+    color: #F5F7FA;
+    font-weight: 700;
+    padding: 12px 20px;
+}
+*[theme="light"] QLineEdit#searchBar:focus {
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    background-color: rgba(255, 255, 255, 0.15);
+}
+*[theme="light"] QLabel#logoLabel { color: #F5F7FA; letter-spacing: 7px; font-weight: 950; }
+*[theme="light"] QLabel#sectionTitle { color: #9AA2B0; font-weight: 900; letter-spacing: 3.5px; }
+
+/* BENTO КАРТОЧКИ: Прогрессивный градиент рамок */
+*[theme="light"] MovieCardWidget {
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 2px solid qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(255,255,255,0.35), stop:1 rgba(255,255,255,0.02));
+    border-radius: 36px;
+    padding: 12px;
+}
+
+*[theme="light"] QLabel#coverPlaceholder {
+    border-radius: 24px;
+    background-color: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* ТЕКСТА: Четкие титановые оттенки */
+*[theme="light"] MovieCardWidget QLabel, 
+*[theme="light"] MovieDetailsWidget QLabel {
+    color: #F5F7FA;
+    font-weight: 850;
+    background-color: transparent;
+}
+*[theme="light"] MovieCardWidget QLabel#year_label {
+    color: #8C96A8;
+    font-weight: 700;
+}
+*[theme="light"] MovieDetailsWidget QLabel#desc_label {
+    color: #C2CBD9;
+    font-weight: 600;
+}
+
+/* КНОПКИ С ГРАДИЕНТНЫМ ОТЛИВОМ */
+*[theme="light"] QPushButton#actionButton, 
+*[theme="light"] QPushButton#islandActionButton {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #EBEFE6, stop:1 #A3AAB8);
+    color: #1A1C1F;
+    border: none;
+    border-radius: 18px;
+    padding: 12px 24px; /* Фикс обрезки за счет мягких внутренних отступов */
+    font-weight: 900;
+}
+*[theme="light"] QPushButton#actionButton:hover, 
+*[theme="light"] QPushButton#islandActionButton:hover {
+    background-color: #FFFFFF;
+}
+
+*[theme="light"] QPushButton#sysButton {
+    background-color: rgba(255, 255, 255, 0.04);
+    border: 1.5px solid rgba(255, 255, 255, 0.18);
+    color: #F5F7FA;
+    border-radius: 18px;
+    font-weight: 800;
+    padding: 8px 20px;
+}
+*[theme="light"] QPushButton#sysButton:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.4);
+}
+*[theme="light"] QPushButton#languageButton {
+    color: #F5F7FA;
+    background-color: rgba(255, 255, 255, 0.04);
+    border: 1.5px solid rgba(255, 255, 255, 0.18);
+    border-radius: 12px;
+}
+
+/* КИБЕР-ОСТРОВ */
+*[theme="light"] QFrame#continueIsland {
+    background-color: rgba(35, 38, 43, 0.9);
+    border: 2px solid qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 rgba(255,255,255,0.25), stop:1 rgba(255,255,255,0.03));
+    border-radius: 32px;
+}
+*[theme="light"] QFrame#continueIsland QLabel { color: #F5F7FA; font-weight: 900; }
+*[theme="light"] QPushButton#closeIslandButton { color: #8C96A8; }

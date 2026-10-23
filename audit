@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""Аудит ровно тех 15 файлов на торрент-трекеры (приватные/пиратские)."""
+
+import re
+import sys
+from pathlib import Path
+
+FILES = [
+    "tools/__init__.py",
+    "tools/apply_seed.py",
+    "tools/cache_stats.py",
+    "tools/make_seed.py",
+    "tools/manage_whitelist.py",
+    "tools/verify_whitelist.py",
+    "ui/main_window.py",
+    "ui/setup_wizard.py",
+    "ui/source_picker_dialog.py",
+    "ui/styles.qss",
+    "ui/widgets/__init__.py",
+    "ui/widgets/card_widget.py",
+    "ui/widgets/details_widget.py",
+    "ui/widgets/feed_widget.py",
+    "ui/widgets/player_widget.py",
+]
+
+PUBLIC = {
+    "tracker.opentrackr.org", "tracker.openbittorrent.com", "tracker.publicbt.com",
+    "tracker.istole.it", "tracker.coppersurfer.tk", "tracker.leechers-paradise.org",
+    "tracker.internetwarriors.net", "tracker.dler.org", "explodie.org",
+    "exodus.desync.com", "bt1.archive.org", "bt2.archive.org",
+    "open.demonii.com", "p4p.arenabg.com", "tracker.torrent.eu.org",
+    "tracker.tiny-vps.com", "tracker.files.fm",
+}
+
+PIRATE = {
+    "rutracker.org", "rutracker.net", "rutracker.ru", "rutor.info", "rutor.is",
+    "nnm-club.me", "nnm-club.name", "nnmclub.to", "kinozal.tv", "kinozal.me",
+    "lostfilm.tv", "lostfilm.info", "tapochek.net", "megapeer.org",
+    "thepiratebay.org", "thepiratebay.se", "1337x.to", "1337x.st", "x1337x.ws",
+    "yts.mx", "yts.lt", "yts.ag", "eztv.re", "eztv.io", "eztv.wf",
+    "torrentz2.eu", "torrentz.eu", "nyaa.si", "nyaa.eu", "anidex.info",
+    "rarbg.to", "limetorrents.info", "kickass.to", "kat.cr",
+    "torrentgalaxy.to", "torrentgalaxy.org", "zooqle.com", "glodls.to",
+}
+
+RX = {
+    "magnet":       re.compile(r"magnet:\?", re.I),
+    "btih":         re.compile(r"xt=urn:btih", re.I),
+    "announce":     re.compile(r"\bannounce\b", re.I),
+    "scrape":       re.compile(r"/scrape\b", re.I),
+    "passkey":      re.compile(r"passkey\s*=", re.I),
+    "announce_hex": re.compile(r"announce/[a-f0-9]{16,}", re.I),
+    "torrent_file": re.compile(r"\.torrent\b", re.I),
+    "pirate_kw":    re.compile(r"\b(pirate|warez|crack|keygen|nulled|repack|dox)\b", re.I),
+    "url":          re.compile(r"https?://([a-zA-Z0-9.\-]+)", re.I),
+}
+
+
+def classify(domain: str) -> str:
+    d = domain.lower().strip(".")
+    if d in PUBLIC:
+        return "public"
+    if d in PIRATE:
+        return "pirate"
+    if "tracker" in d and "opentrackr" not in d:
+        return "unknown_tracker"
+    return "other"
+
+
+def scan(path: Path) -> list[tuple[int, str, str, str]]:
+    """Возвращает [(line, severity, kind, text)]."""
+    if not path.exists():
+        return [(0, "error", "missing_file", str(path))]
+
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    hits: list[tuple[int, str, str, str]] = []
+
+    for n, line in enumerate(text.splitlines(), 1):
+        s = line.strip()
+
+        if RX["passkey"].search(line):
+            hits.append((n, "error", "passkey", s[:140]))
+        if RX["announce_hex"].search(line):
+            hits.append((n, "error", "announce_hex", s[:140]))
+        if RX["magnet"].search(line):
+            hits.append((n, "warn", "magnet", s[:140]))
+        if RX["btih"].search(line):
+            hits.append((n, "warn", "btih", s[:140]))
+        if RX["announce"].search(line):
+            hits.append((n, "warn", "announce", s[:140]))
+        if RX["scrape"].search(line):
+            hits.append((n, "warn", "scrape", s[:140]))
+        if RX["torrent_file"].search(line):
+            hits.append((n, "warn", "torrent_file", s[:140]))
+        if RX["pirate_kw"].search(line):
+            hits.append((n, "error", "pirate_kw", s[:140]))
+
+        for m in RX["url"].finditer(line):
+            kind = classify(m.group(1))
+            if kind == "pirate":
+                hits.append((n, "error", "pirate_tracker", m.group(1)))
+            elif kind == "unknown_tracker":
+                hits.append((n, "warn", "unknown_tracker", m.group(1)))
+            elif kind == "public":
+                hits.append((n, "info", "public_tracker", m.group(1)))
+
+    return hits
+
+
+def main() -> int:
+    total = {"error": 0, "warn": 0, "info": 0}
+    label = {"error": "🔴 ERR ", "warn": "🟡 WARN", "info": "🔵 INFO"}
+    order = {"error": 0, "warn": 1, "info": 2}
+
+    for f in FILES:
+        hits = scan(Path(f))
+        if not hits:
+            print(f"✅ {f}")
+            continue
+        print(f"\n📄 {f}")
+        for n, sev, kind, txt in sorted(hits, key=lambda x: (order[x[1]], x[0])):
+            total[sev] += 1
+            print(f"  {label[sev]}  L{n:<4}  {kind:<16} {txt}")
+
+    print("\n" + "=" * 66)
+    print(f"Итого: 🔴 {total['error']}   🟡 {total['warn']}   🔵 {total['info']}")
+    print("=" * 66)
+    return 1 if total["error"] else (2 if total["warn"] else 0)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
