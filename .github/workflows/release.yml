@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Тег для релиза (например, v1.0.5)"
+        description: "Тег для релиза"
         required: true
         type: string
 
@@ -36,9 +36,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
+
+          Write-Host "== Проверка ключевых пакетов ==" -ForegroundColor Cyan
           python -c "import PyInstaller; print('PyInstaller', PyInstaller.__version__)"
-          python -c "import PyQt6; print('PyQt6 OK')"
+          python -c "import PyQt6.QtCore; print('PyQt6.QtCore OK')"
+          python -c "import PyQt6.QtGui; print('PyQt6.QtGui OK')"
+          python -c "import PyQt6.QtWidgets; print('PyQt6.QtWidgets OK')"
+          python -c "import PyQt6.QtMultimedia; print('PyQt6.QtMultimedia OK')"
+          python -c "import PyQt6.QtMultimediaWidgets; print('PyQt6.QtMultimediaWidgets OK')"
+          python -c "import PyQt6.QtWebEngineWidgets; print('PyQt6.QtWebEngineWidgets OK')"
           python -c "import libtorrent; print('libtorrent OK')"
+          python -c "import aiohttp; print('aiohttp', aiohttp.__version__)"
+          python -c "import nodriver; print('nodriver OK')"
+          python -c "import psutil; print('psutil', psutil.__version__)"
+          python -c "import qasync; print('qasync OK')"
+          python -c "import websockets; print('websockets', websockets.__version__)"
 
       - name: Determine version
         id: version
@@ -50,7 +62,8 @@ jobs:
             TAG="$GITHUB_REF_NAME"
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "Resolved tag: $TAG"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "Resolved: $TAG (version=${TAG#v})"
 
       - name: Clean build dirs
         shell: pwsh
@@ -63,9 +76,65 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
+          # PyQt6: собираем ВСЁ, но исключаем явно неиспользуемые модули.
+          # Реально используются:
+          #   QtCore, QtGui, QtWidgets, QtMultimedia, QtMultimediaWidgets,
+          #   QtWebEngineWidgets (+QtWebEngineCore), QtSvg (иконки), QtNetwork (для WebEngine)
+          # Всё остальное — мусор, который тянет +50 MB.
+
           pyinstaller --onedir --windowed --name ama-gi-player `
             --collect-all PyQt6 `
+            --exclude-module PyQt6.Qt3DCore `
+            --exclude-module PyQt6.Qt3DRender `
+            --exclude-module PyQt6.Qt3DInput `
+            --exclude-module PyQt6.Qt3DLogic `
+            --exclude-module PyQt6.Qt3DAnimation `
+            --exclude-module PyQt6.Qt3DExtras `
+            --exclude-module PyQt6.QtQuick `
+            --exclude-module PyQt6.QtQuickWidgets `
+            --exclude-module PyQt6.QtQml `
+            --exclude-module PyQt6.QtQuick3D `
+            --exclude-module PyQt6.QtPdf `
+            --exclude-module PyQt6.QtPdfWidgets `
+            --exclude-module PyQt6.QtCharts `
+            --exclude-module PyQt6.QtDataVisualization `
+            --exclude-module PyQt6.QtDesigner `
+            --exclude-module PyQt6.QtHelp `
+            --exclude-module PyQt6.QtTest `
+            --exclude-module PyQt6.QtUiTools `
+            --exclude-module PyQt6.QtBluetooth `
+            --exclude-module PyQt6.QtNfc `
+            --exclude-module PyQt6.QtPositioning `
+            --exclude-module PyQt6.QtLocation `
+            --exclude-module PyQt6.QtSensors `
+            --exclude-module PyQt6.QtSerialPort `
+            --exclude-module PyQt6.QtRemoteObjects `
+            --exclude-module PyQt6.QtScxml `
+            --exclude-module PyQt6.QtStateMachine `
+            --exclude-module PyQt6.QtSql `
+            --hidden-import PyQt6.QtCore `
+            --hidden-import PyQt6.QtGui `
+            --hidden-import PyQt6.QtWidgets `
+            --hidden-import PyQt6.QtMultimedia `
+            --hidden-import PyQt6.QtMultimediaWidgets `
+            --hidden-import PyQt6.QtWebEngineWidgets `
+            --hidden-import PyQt6.QtWebEngineCore `
+            --hidden-import PyQt6.QtSvg `
+            --hidden-import PyQt6.QtNetwork `
+            --hidden-import PyQt6.QtPrintSupport `
             --collect-all libtorrent `
+            --hidden-import aiohttp `
+            --hidden-import aiohttp.client `
+            --hidden-import aiohttp.web `
+            --hidden-import aiohttp.resolver `
+            --hidden-import nodriver `
+            --hidden-import psutil `
+            --hidden-import qasync `
+            --hidden-import websockets `
+            --hidden-import websockets.exceptions `
+            --hidden-import websockets.client `
+            --hidden-import websockets.legacy `
+            --hidden-import websockets.legacy.client `
             --add-data "data;data" `
             --add-data "ui/styles.qss;ui" `
             main.py
@@ -75,97 +144,115 @@ jobs:
             exit 1
           }
 
+          $totalMB = [math]::Round((Get-ChildItem -Recurse "dist\ama-gi-player" | Measure-Object Length -Sum).Sum / 1MB, 1)
+          Write-Host "[OK] Итого: $totalMB MB" -ForegroundColor Green
+
       - name: Verify build output
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-
           $exe = "dist\ama-gi-player\ama-gi-player.exe"
           if (-not (Test-Path $exe)) {
             Write-Host "[ERROR] $exe не создан" -ForegroundColor Red
-            Write-Host "Содержимое dist\:" -ForegroundColor Yellow
-            if (Test-Path "dist") {
-              Get-ChildItem -Recurse "dist" | Select-Object FullName
-            } else {
-              Write-Host "  dist\ отсутствует" -ForegroundColor Red
-            }
+            Get-ChildItem -Recurse "dist" | Select-Object FullName | Out-Host
             exit 1
           }
-
           $sizeMB = [math]::Round((Get-Item $exe).Length / 1MB, 1)
-          Write-Host "[OK] $exe ($sizeMB MB)" -ForegroundColor Green
+          Write-Host "[OK] exe: $sizeMB MB" -ForegroundColor Green
 
-          # Проверить критичные файлы в _internal
-          $qss = "dist\ama-gi-player\_internal\ui\styles.qss"
-          if (-not (Test-Path $qss)) {
-            Write-Host "[WARN] $qss не найден" -ForegroundColor Yellow
-          } else {
-            Write-Host "[OK] styles.qss на месте" -ForegroundColor Green
+          # Qt плагины и ключевые DLL
+          $checks = @(
+              "dist\ama-gi-player\_internal\ui\styles.qss",
+              "dist\ama-gi-player\_internal\PyQt6\Qt6\bin\Qt6Core.dll",
+              "dist\ama-gi-player\_internal\PyQt6\Qt6\bin\Qt6Widgets.dll",
+              "dist\ama-gi-player\_internal\PyQt6\Qt6\bin\Qt6Multimedia.dll",
+              "dist\ama-gi-player\_internal\PyQt6\Qt6\bin\Qt6WebEngineCore.dll"
+          )
+          foreach ($p in $checks) {
+            if (-not (Test-Path $p)) {
+              Write-Host "[WARN] отсутствует: $p" -ForegroundColor Yellow
+            } else {
+              Write-Host "[OK] $p" -ForegroundColor Green
+            }
           }
 
-          $data = "dist\ama-gi-player\_internal\data"
-          if (-not (Test-Path $data)) {
-            Write-Host "[WARN] $data не найден" -ForegroundColor Yellow
-          } else {
-            $files = Get-ChildItem -Recurse $data | Select-Object -ExpandProperty Name
-            Write-Host "[OK] data\ содержит: $($files -join ', ')" -ForegroundColor Green
+          # QtWebEngineProcess.exe — отдельный процесс, критичен для QWebEngineView
+          $webengineProc = Get-ChildItem -Recurse "dist\ama-gi-player" -Filter "QtWebEngineProcess.exe" -ErrorAction SilentlyContinue
+          if (-not $webengineProc) {
+            Write-Host "[ERROR] QtWebEngineProcess.exe не найден — QWebEngineView упадёт" -ForegroundColor Red
+            exit 1
           }
+          Write-Host "[OK] QtWebEngineProcess.exe: $($webengineProc[0].FullName)" -ForegroundColor Green
+
+          # libtorrent
+          $lt = Get-ChildItem -Recurse "dist\ama-gi-player" -Filter "*libtorrent*" -ErrorAction SilentlyContinue
+          if (-not $lt) {
+            Write-Host "[ERROR] libtorrent.pyd не найден" -ForegroundColor Red
+            exit 1
+          }
+          Write-Host "[OK] libtorrent: $($lt[0].Name)" -ForegroundColor Green
 
       - name: Prepare package contents
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+          $version = "${{ steps.version.outputs.version }}"
+
           # Пустая bin\ для пользовательских утилит
           New-Item -ItemType Directory -Force "dist\ama-gi-player\bin" | Out-Null
 
-          # .env.example рядом с exe (если есть в репо)
+          # .env.example рядом с exe
           if (Test-Path ".env.example") {
             Copy-Item ".env.example" "dist\ama-gi-player\.env.example"
-            Write-Host "[OK] .env.example скопирован" -ForegroundColor Green
           }
 
-          # Проверка, что yts_api_base.txt НЕ попал (он в .gitignore)
-          $yts = "dist\ama-gi-player\_internal\data\yts_api_base.txt"
-          if (Test-Path $yts) {
-            Write-Host "[ERROR] yts_api_base.txt попал в сборку! Он должен быть в .gitignore." -ForegroundColor Red
-            exit 1
-          }
-          Write-Host "[OK] yts_api_base.txt отсутствует (правильно)" -ForegroundColor Green
+          # Отдельный .exe для обновлений (маленький файл, ~200 KB)
+          $exeOnly = "dist\amagi-player-v$version.exe"
+          Copy-Item "dist\ama-gi-player\ama-gi-player.exe" $exeOnly
+          $sizeKB = [math]::Round((Get-Item $exeOnly).Length / 1KB, 1)
+          Write-Host "[OK] exe-only: $exeOnly ($sizeKB KB)" -ForegroundColor Green
 
-          # Проверка, что sources.txt НЕ попал
-          $src = "dist\ama-gi-player\_internal\data\sources.txt"
-          if (Test-Path $src) {
-            Write-Host "[ERROR] sources.txt попал в сборку! Он должен быть в .gitignore." -ForegroundColor Red
-            exit 1
+          # Проверки на утечки приватных файлов
+          $leaks = @(
+              "dist\ama-gi-player\_internal\data\yts_api_base.txt",
+              "dist\ama-gi-player\_internal\data\sources.txt",
+              "dist\ama-gi-player\_internal\data\mode.txt",
+              "dist\ama-gi-player\_internal\data\whitelist.db",
+              "dist\ama-gi-player\_internal\data\app_data.db",
+              "dist\ama-gi-player\_internal\.env"
+          )
+          foreach ($p in $leaks) {
+            if (Test-Path $p) {
+              Write-Host "[ERROR] Утечка приватного файла: $p" -ForegroundColor Red
+              exit 1
+            }
           }
-          Write-Host "[OK] sources.txt отсутствует (правильно)" -ForegroundColor Green
 
-          # Проверка, что switch_mode.py НЕ попал
           $sw = Get-ChildItem -Recurse "dist\ama-gi-player" -Filter "switch_mode*" -ErrorAction SilentlyContinue
           if ($sw) {
-            Write-Host "[ERROR] switch_mode.py попал в сборку!" -ForegroundColor Red
+            Write-Host "[ERROR] switch_mode.py попал в сборку" -ForegroundColor Red
             exit 1
           }
-          Write-Host "[OK] switch_mode.py отсутствует (правильно)" -ForegroundColor Green
+
+          Write-Host "[OK] Утечек не обнаружено" -ForegroundColor Green
 
       - name: Package ZIP
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $version = "${{ steps.version.outputs.tag }}".TrimStart('v')
-          $zip = "dist\amagi-player-$version-windows.zip"
+          $version = "${{ steps.version.outputs.version }}"
+          $zip = "dist\amagi-player-v$version-windows.zip"
           Compress-Archive -Path "dist\ama-gi-player\*" -DestinationPath $zip -Force
-          if (-not (Test-Path $zip)) {
-            Write-Host "[ERROR] ZIP не создан" -ForegroundColor Red
-            exit 1
-          }
           $sizeMB = [math]::Round((Get-Item $zip).Length / 1MB, 1)
           Write-Host "[OK] $zip ($sizeMB MB)" -ForegroundColor Green
 
-      - name: Upload artifact
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: amagi-player-windows
-          path: dist/*.zip
+          name: release-files
+          path: |
+            dist/*.zip
+            dist/amagi-player-v*.exe
           if-no-files-found: error
           retention-days: 14
 
@@ -173,8 +260,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          name: "Amagi-Player ${{ steps.version.outputs.tag }} (Windows)"
+          name: "Amagi-Player ${{ steps.version.outputs.tag }}"
           generate_release_notes: true
-          files: dist/*.zip
+          files: |
+            dist/*.zip
+            dist/amagi-player-v*.exe
           draft: false
           prerelease: false
