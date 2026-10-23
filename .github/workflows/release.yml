@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Тег для релиза"
+        description: "Тег для релиза (например, v1.0.9)"
         required: true
         type: string
 
@@ -33,24 +33,23 @@ jobs:
       - name: Install dependencies
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pyinstaller
-
-          Write-Host "== Проверка ключевых пакетов ==" -ForegroundColor Cyan
-          python -c "import PyInstaller; print('PyInstaller', PyInstaller.__version__)"
-          python -c "import PyQt6.QtCore; print('PyQt6.QtCore OK')"
-          python -c "import PyQt6.QtGui; print('PyQt6.QtGui OK')"
-          python -c "import PyQt6.QtWidgets; print('PyQt6.QtWidgets OK')"
-          python -c "import PyQt6.QtMultimedia; print('PyQt6.QtMultimedia OK')"
-          python -c "import PyQt6.QtMultimediaWidgets; print('PyQt6.QtMultimediaWidgets OK')"
-          python -c "import PyQt6.QtWebEngineWidgets; print('PyQt6.QtWebEngineWidgets OK')"
+          pip install nuitka ordered-set zstandard
+          Write-Host "== Проверка пакетов ==" -ForegroundColor Cyan
+          python -c "import nuitka; print('nuitka OK')"
+          python -c "import PyQt6.QtCore; print('QtCore OK')"
+          python -c "import PyQt6.QtWidgets; print('QtWidgets OK')"
+          python -c "import PyQt6.QtMultimedia; print('QtMultimedia OK')"
+          python -c "import PyQt6.QtMultimediaWidgets; print('QtMultimediaWidgets OK')"
+          python -c "import PyQt6.QtWebEngineWidgets; print('QtWebEngineWidgets OK')"
           python -c "import libtorrent; print('libtorrent OK')"
-          python -c "import aiohttp; print('aiohttp', aiohttp.__version__)"
+          python -c "import aiohttp; print('aiohttp OK')"
           python -c "import nodriver; print('nodriver OK')"
-          python -c "import psutil; print('psutil', psutil.__version__)"
+          python -c "import psutil; print('psutil OK')"
           python -c "import qasync; print('qasync OK')"
-          python -c "import websockets; print('websockets', websockets.__version__)"
+          python -c "import websockets; print('websockets OK')"
 
       - name: Determine version
         id: version
@@ -69,172 +68,106 @@ jobs:
         shell: pwsh
         run: |
           Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
-          Remove-Item -Force *.spec -ErrorAction SilentlyContinue
+          Remove-Item -Force *.spec, nuitka-crash-report.xml -ErrorAction SilentlyContinue
 
-      - name: Build with PyInstaller
+      - name: Build with Nuitka (onefile)
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          # PyQt6: собираем ВСЁ, но исключаем явно неиспользуемые модули.
-          # Реально используются:
-          #   QtCore, QtGui, QtWidgets, QtMultimedia, QtMultimediaWidgets,
-          #   QtWebEngineWidgets (+QtWebEngineCore), QtSvg (иконки), QtNetwork (для WebEngine)
-          # Всё остальное — мусор, который тянет +50 MB.
+          $nuitkaArgs = @(
+            "--onefile"
+            "--enable-plugin=pyqt6"
+            "--include-module=PyQt6.QtWebEngineCore"
+            "--include-module=PyQt6.QtWebEngineWidgets"
+            "--include-package=libtorrent"
+            "--include-package-data=libtorrent"
+            "--include-data-dir=data=data"
+            "--include-data-file=ui/styles.qss=ui/styles.qss"
+            "--windows-console-mode=disable"
+            "--output-dir=dist"
+            "--output-filename=ama-gi-player.exe"
+            "--assume-yes-for-downloads"
+            "--company-name=AkashaForge"
+            "--product-name=Amagi-Player"
+            "main.py"
+          )
 
-          pyinstaller --onedir --windowed --name ama-gi-player `
-            --collect-all PyQt6 `
-            --exclude-module PyQt6.Qt3DCore `
-            --exclude-module PyQt6.Qt3DRender `
-            --exclude-module PyQt6.Qt3DInput `
-            --exclude-module PyQt6.Qt3DLogic `
-            --exclude-module PyQt6.Qt3DAnimation `
-            --exclude-module PyQt6.Qt3DExtras `
-            --exclude-module PyQt6.QtQuick `
-            --exclude-module PyQt6.QtQuickWidgets `
-            --exclude-module PyQt6.QtQml `
-            --exclude-module PyQt6.QtQuick3D `
-            --exclude-module PyQt6.QtPdf `
-            --exclude-module PyQt6.QtPdfWidgets `
-            --exclude-module PyQt6.QtCharts `
-            --exclude-module PyQt6.QtDataVisualization `
-            --exclude-module PyQt6.QtDesigner `
-            --exclude-module PyQt6.QtHelp `
-            --exclude-module PyQt6.QtTest `
-            --exclude-module PyQt6.QtUiTools `
-            --exclude-module PyQt6.QtBluetooth `
-            --exclude-module PyQt6.QtNfc `
-            --exclude-module PyQt6.QtPositioning `
-            --exclude-module PyQt6.QtLocation `
-            --exclude-module PyQt6.QtSensors `
-            --exclude-module PyQt6.QtSerialPort `
-            --exclude-module PyQt6.QtRemoteObjects `
-            --exclude-module PyQt6.QtScxml `
-            --exclude-module PyQt6.QtStateMachine `
-            --exclude-module PyQt6.QtSql `
-            --hidden-import PyQt6.QtCore `
-            --hidden-import PyQt6.QtGui `
-            --hidden-import PyQt6.QtWidgets `
-            --hidden-import PyQt6.QtMultimedia `
-            --hidden-import PyQt6.QtMultimediaWidgets `
-            --hidden-import PyQt6.QtWebEngineWidgets `
-            --hidden-import PyQt6.QtWebEngineCore `
-            --hidden-import PyQt6.QtSvg `
-            --hidden-import PyQt6.QtNetwork `
-            --hidden-import PyQt6.QtPrintSupport `
-            --collect-all libtorrent `
-            --hidden-import aiohttp `
-            --hidden-import aiohttp.client `
-            --hidden-import aiohttp.web `
-            --hidden-import aiohttp.resolver `
-            --hidden-import nodriver `
-            --hidden-import psutil `
-            --hidden-import qasync `
-            --hidden-import websockets `
-            --hidden-import websockets.exceptions `
-            --hidden-import websockets.client `
-            --hidden-import websockets.legacy `
-            --hidden-import websockets.legacy.client `
-            --add-data "data;data" `
-            --add-data "ui/styles.qss;ui" `
-            main.py
+          Write-Host "== Запуск Nuitka ==" -ForegroundColor Cyan
+          Write-Host "python -m nuitka $($nuitkaArgs -join ' ')"
 
+          & python -m nuitka $nuitkaArgs
           if ($LASTEXITCODE -ne 0) {
-            Write-Host "[ERROR] PyInstaller вернул код $LASTEXITCODE" -ForegroundColor Red
+            Write-Host "[ERROR] Nuitka вернул код $LASTEXITCODE" -ForegroundColor Red
             exit 1
           }
-
-          $totalMB = [math]::Round((Get-ChildItem -Recurse "dist\ama-gi-player" | Measure-Object Length -Sum).Sum / 1MB, 1)
-          Write-Host "[OK] Итого: $totalMB MB" -ForegroundColor Green
 
       - name: Verify build output
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $exe = "dist\ama-gi-player\ama-gi-player.exe"
+          $exe = "dist\ama-gi-player.exe"
           if (-not (Test-Path $exe)) {
             Write-Host "[ERROR] $exe не создан" -ForegroundColor Red
-            Get-ChildItem -Recurse "dist" | Select-Object FullName | Out-Host
+            if (Test-Path "dist") {
+              Get-ChildItem -Recurse "dist" | Select-Object FullName, Length | Out-Host
+            }
             exit 1
           }
           $sizeMB = [math]::Round((Get-Item $exe).Length / 1MB, 1)
           Write-Host "[OK] exe: $sizeMB MB" -ForegroundColor Green
-
-          # Qt плагины и ключевые DLL
-          $checks = @(
-              "dist\ama-gi-player\_internal\ui\styles.qss",
-              "dist\ama-gi-player\_internal\PyQt6\Qt6\bin\Qt6Core.dll",
-              "dist\ama-gi-player\_internal\PyQt6\Qt6\bin\Qt6Widgets.dll",
-              "dist\ama-gi-player\_internal\PyQt6\Qt6\bin\Qt6Multimedia.dll",
-              "dist\ama-gi-player\_internal\PyQt6\Qt6\bin\Qt6WebEngineCore.dll"
-          )
-          foreach ($p in $checks) {
-            if (-not (Test-Path $p)) {
-              Write-Host "[WARN] отсутствует: $p" -ForegroundColor Yellow
-            } else {
-              Write-Host "[OK] $p" -ForegroundColor Green
-            }
-          }
-
-          # QtWebEngineProcess.exe — отдельный процесс, критичен для QWebEngineView
-          $webengineProc = Get-ChildItem -Recurse "dist\ama-gi-player" -Filter "QtWebEngineProcess.exe" -ErrorAction SilentlyContinue
-          if (-not $webengineProc) {
-            Write-Host "[ERROR] QtWebEngineProcess.exe не найден — QWebEngineView упадёт" -ForegroundColor Red
-            exit 1
-          }
-          Write-Host "[OK] QtWebEngineProcess.exe: $($webengineProc[0].FullName)" -ForegroundColor Green
-
-          # libtorrent
-          $lt = Get-ChildItem -Recurse "dist\ama-gi-player" -Filter "*libtorrent*" -ErrorAction SilentlyContinue
-          if (-not $lt) {
-            Write-Host "[ERROR] libtorrent.pyd не найден" -ForegroundColor Red
-            exit 1
-          }
-          Write-Host "[OK] libtorrent: $($lt[0].Name)" -ForegroundColor Green
 
       - name: Prepare package contents
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $version = "${{ steps.version.outputs.version }}"
+          $pkgDir = "dist\amagi-player-v$version"
 
-          # Пустая bin\ для пользовательских утилит
-          New-Item -ItemType Directory -Force "dist\ama-gi-player\bin" | Out-Null
+          New-Item -ItemType Directory -Force $pkgDir | Out-Null
+          Copy-Item "dist\ama-gi-player.exe" "$pkgDir\ama-gi-player.exe"
 
-          # .env.example рядом с exe
-          if (Test-Path ".env.example") {
-            Copy-Item ".env.example" "dist\ama-gi-player\.env.example"
-          }
+          $binDir = "$pkgDir\bin"
+          New-Item -ItemType Directory -Force $binDir | Out-Null
 
-          # Отдельный .exe для обновлений (маленький файл, ~200 KB)
-          $exeOnly = "dist\amagi-player-v$version.exe"
-          Copy-Item "dist\ama-gi-player\ama-gi-player.exe" $exeOnly
-          $sizeKB = [math]::Round((Get-Item $exeOnly).Length / 1KB, 1)
-          Write-Host "[OK] exe-only: $exeOnly ($sizeKB KB)" -ForegroundColor Green
-
-          # Проверки на утечки приватных файлов
-          $leaks = @(
-              "dist\ama-gi-player\_internal\data\yts_api_base.txt",
-              "dist\ama-gi-player\_internal\data\sources.txt",
-              "dist\ama-gi-player\_internal\data\mode.txt",
-              "dist\ama-gi-player\_internal\data\whitelist.db",
-              "dist\ama-gi-player\_internal\data\app_data.db",
-              "dist\ama-gi-player\_internal\.env"
+          $binReadmeLines = @(
+            "Сюда кладите внешние утилиты:",
+            "  - aria2c.exe",
+            "  - Jackett (папка целиком)",
+            "  - Prowlarr (папка целиком)",
+            "  - ffmpeg.exe",
+            "",
+            "Приложение ищет их по пути:",
+            "  <папка_с_ama-gi-player.exe>\bin\"
           )
-          foreach ($p in $leaks) {
-            if (Test-Path $p) {
-              Write-Host "[ERROR] Утечка приватного файла: $p" -ForegroundColor Red
-              exit 1
-            }
+          Set-Content -Path "$binDir\README.txt" -Value $binReadmeLines -Encoding UTF8
+
+          if (Test-Path ".env.example") {
+            Copy-Item ".env.example" "$pkgDir\.env.example"
+            Write-Host "[OK] .env.example скопирован" -ForegroundColor Green
+          } else {
+            $envLines = @(
+              "# Amagi-Player — локальный конфиг.",
+              "# Скопируйте этот файл в .env (рядом с ama-gi-player.exe) и заполните.",
+              "",
+              "# API-ключ Кинопоиска (если используется)",
+              "KP_API_KEY=",
+              "",
+              "# Секрет aria2 (если используется)",
+              "ARIA2_SECRET="
+            )
+            Set-Content -Path "$pkgDir\.env.example" -Value $envLines -Encoding UTF8
+            Write-Host "[OK] .env.example сгенерирован" -ForegroundColor Green
           }
 
-          $sw = Get-ChildItem -Recurse "dist\ama-gi-player" -Filter "switch_mode*" -ErrorAction SilentlyContinue
-          if ($sw) {
-            Write-Host "[ERROR] switch_mode.py попал в сборку" -ForegroundColor Red
-            exit 1
+          if (Test-Path "INSTALL.md") {
+            Copy-Item "INSTALL.md" "$pkgDir\README.txt"
+          } elseif (Test-Path "README.md") {
+            Copy-Item "README.md" "$pkgDir\README.txt"
           }
 
-          Write-Host "[OK] Утечек не обнаружено" -ForegroundColor Green
+          Write-Host "[OK] Дистрибутив готов: $pkgDir" -ForegroundColor Green
+          Get-ChildItem -Recurse $pkgDir | Select-Object FullName, Length | Format-Table -AutoSize
 
       - name: Package ZIP
         shell: pwsh
@@ -242,7 +175,11 @@ jobs:
           $ErrorActionPreference = "Stop"
           $version = "${{ steps.version.outputs.version }}"
           $zip = "dist\amagi-player-v$version-windows.zip"
-          Compress-Archive -Path "dist\ama-gi-player\*" -DestinationPath $zip -Force
+          Compress-Archive -Path "dist\amagi-player-v$version\*" -DestinationPath $zip -Force
+          if (-not (Test-Path $zip)) {
+            Write-Host "[ERROR] ZIP не создан" -ForegroundColor Red
+            exit 1
+          }
           $sizeMB = [math]::Round((Get-Item $zip).Length / 1MB, 1)
           Write-Host "[OK] $zip ($sizeMB MB)" -ForegroundColor Green
 
@@ -252,7 +189,7 @@ jobs:
           name: release-files
           path: |
             dist/*.zip
-            dist/amagi-player-v*.exe
+            dist/ama-gi-player.exe
           if-no-files-found: error
           retention-days: 14
 
@@ -264,6 +201,6 @@ jobs:
           generate_release_notes: true
           files: |
             dist/*.zip
-            dist/amagi-player-v*.exe
+            dist/ama-gi-player.exe
           draft: false
           prerelease: false
