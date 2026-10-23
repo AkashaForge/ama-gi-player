@@ -1,0 +1,180 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Тег для релиза (например, v1.0.5)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+          python -c "import PyInstaller; print('PyInstaller', PyInstaller.__version__)"
+          python -c "import PyQt6; print('PyQt6 OK')"
+          python -c "import libtorrent; print('libtorrent OK')"
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="$GITHUB_REF_NAME"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Resolved tag: $TAG"
+
+      - name: Clean build dirs
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
+          Remove-Item -Force *.spec -ErrorAction SilentlyContinue
+
+      - name: Build with PyInstaller
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          pyinstaller --onedir --windowed --name ama-gi-player `
+            --collect-all PyQt6 `
+            --collect-all libtorrent `
+            --add-data "data;data" `
+            --add-data "ui/styles.qss;ui" `
+            main.py
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "[ERROR] PyInstaller вернул код $LASTEXITCODE" -ForegroundColor Red
+            exit 1
+          }
+
+      - name: Verify build output
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $exe = "dist\ama-gi-player\ama-gi-player.exe"
+          if (-not (Test-Path $exe)) {
+            Write-Host "[ERROR] $exe не создан" -ForegroundColor Red
+            Write-Host "Содержимое dist\:" -ForegroundColor Yellow
+            if (Test-Path "dist") {
+              Get-ChildItem -Recurse "dist" | Select-Object FullName
+            } else {
+              Write-Host "  dist\ отсутствует" -ForegroundColor Red
+            }
+            exit 1
+          }
+
+          $sizeMB = [math]::Round((Get-Item $exe).Length / 1MB, 1)
+          Write-Host "[OK] $exe ($sizeMB MB)" -ForegroundColor Green
+
+          # Проверить критичные файлы в _internal
+          $qss = "dist\ama-gi-player\_internal\ui\styles.qss"
+          if (-not (Test-Path $qss)) {
+            Write-Host "[WARN] $qss не найден" -ForegroundColor Yellow
+          } else {
+            Write-Host "[OK] styles.qss на месте" -ForegroundColor Green
+          }
+
+          $data = "dist\ama-gi-player\_internal\data"
+          if (-not (Test-Path $data)) {
+            Write-Host "[WARN] $data не найден" -ForegroundColor Yellow
+          } else {
+            $files = Get-ChildItem -Recurse $data | Select-Object -ExpandProperty Name
+            Write-Host "[OK] data\ содержит: $($files -join ', ')" -ForegroundColor Green
+          }
+
+      - name: Prepare package contents
+        shell: pwsh
+        run: |
+          # Пустая bin\ для пользовательских утилит
+          New-Item -ItemType Directory -Force "dist\ama-gi-player\bin" | Out-Null
+
+          # .env.example рядом с exe (если есть в репо)
+          if (Test-Path ".env.example") {
+            Copy-Item ".env.example" "dist\ama-gi-player\.env.example"
+            Write-Host "[OK] .env.example скопирован" -ForegroundColor Green
+          }
+
+          # Проверка, что yts_api_base.txt НЕ попал (он в .gitignore)
+          $yts = "dist\ama-gi-player\_internal\data\yts_api_base.txt"
+          if (Test-Path $yts) {
+            Write-Host "[ERROR] yts_api_base.txt попал в сборку! Он должен быть в .gitignore." -ForegroundColor Red
+            exit 1
+          }
+          Write-Host "[OK] yts_api_base.txt отсутствует (правильно)" -ForegroundColor Green
+
+          # Проверка, что sources.txt НЕ попал
+          $src = "dist\ama-gi-player\_internal\data\sources.txt"
+          if (Test-Path $src) {
+            Write-Host "[ERROR] sources.txt попал в сборку! Он должен быть в .gitignore." -ForegroundColor Red
+            exit 1
+          }
+          Write-Host "[OK] sources.txt отсутствует (правильно)" -ForegroundColor Green
+
+          # Проверка, что switch_mode.py НЕ попал
+          $sw = Get-ChildItem -Recurse "dist\ama-gi-player" -Filter "switch_mode*" -ErrorAction SilentlyContinue
+          if ($sw) {
+            Write-Host "[ERROR] switch_mode.py попал в сборку!" -ForegroundColor Red
+            exit 1
+          }
+          Write-Host "[OK] switch_mode.py отсутствует (правильно)" -ForegroundColor Green
+
+      - name: Package ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "${{ steps.version.outputs.tag }}".TrimStart('v')
+          $zip = "dist\amagi-player-$version-windows.zip"
+          Compress-Archive -Path "dist\ama-gi-player\*" -DestinationPath $zip -Force
+          if (-not (Test-Path $zip)) {
+            Write-Host "[ERROR] ZIP не создан" -ForegroundColor Red
+            exit 1
+          }
+          $sizeMB = [math]::Round((Get-Item $zip).Length / 1MB, 1)
+          Write-Host "[OK] $zip ($sizeMB MB)" -ForegroundColor Green
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: amagi-player-windows
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "Amagi-Player ${{ steps.version.outputs.tag }} (Windows)"
+          generate_release_notes: true
+          files: dist/*.zip
+          draft: false
+          prerelease: false

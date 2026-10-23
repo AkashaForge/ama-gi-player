@@ -1,0 +1,9 @@
+# Формат (5 полей, разделитель |):
+#   id | name | search_url_template | video_url_regex | title_regex
+#
+# Файл data/direct_sources.txt (в .gitignore) используется CustomDirectProvider
+# для получения прямых URL на видео (mp4/mkv/webm/m3u8).
+# В PUBLIC режиме direct_sources.txt → .bak.
+
+# Пример формата (без реальных URL):
+example|Example Archive|https://example.com/search?q={query}|https?://[^"']+\.(mp4|mkv|webm)|<h3[^>]*>([^<]+)</h3>
