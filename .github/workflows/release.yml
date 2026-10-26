@@ -83,18 +83,15 @@ jobs:
             exit 1
           }
 
-          # "v1.0.8" → "1.0.8"
           $version = $tag -replace '^v', ''
 
-          # Nuitka требует A.B.C.D — дополняем нулями
           $parts = @($version.Split('.'))
           while ($parts.Count -lt 4) { $parts += "0" }
           $version4 = ($parts | Select-Object -First 4) -join '.'
 
-          # Все части должны быть числами
           foreach ($p in $version4.Split('.')) {
             if ($p -notmatch '^\d+$') {
-              Write-Host "[ERROR] Некорректная версия: $version4 (должно быть A.B.C.D)" -ForegroundColor Red
+              Write-Host "[ERROR] Некорректная версия: $version4" -ForegroundColor Red
               exit 1
             }
           }
@@ -164,9 +161,6 @@ jobs:
 
           if ($exitCode -ne 0) {
             Write-Host "[ERROR] Nuitka упал с кодом $exitCode" -ForegroundColor Red
-            if (Test-Path "dist/nuitka-report.xml") {
-              Write-Host "Отчёт Nuitka: dist/nuitka-report.xml" -ForegroundColor Yellow
-            }
             exit $exitCode
           }
 
@@ -180,9 +174,6 @@ jobs:
 
           if (-not (Test-Path $exe)) {
             Write-Host "[ERROR] $exe не создан" -ForegroundColor Red
-            if (Test-Path "dist") {
-              Get-ChildItem -Recurse "dist" | Select-Object FullName, Length | Out-Host
-            }
             exit 1
           }
 
@@ -190,21 +181,11 @@ jobs:
           $sizeMB = [math]::Round($file.Length / 1MB, 1)
 
           if ($file.Length -lt 20MB) {
-            Write-Host "[ERROR] exe слишком маленький ($sizeMB MB) — вероятно, не включены зависимости" -ForegroundColor Red
+            Write-Host "[ERROR] exe слишком маленький ($sizeMB MB)" -ForegroundColor Red
             exit 1
           }
 
           Write-Host "[OK] $($file.Name): $sizeMB MB" -ForegroundColor Green
-
-          $vi = $file.VersionInfo
-          Write-Host ""
-          Write-Host "== Version metadata ==" -ForegroundColor Cyan
-          Write-Host "  CompanyName:      $($vi.CompanyName)"
-          Write-Host "  ProductName:      $($vi.ProductName)"
-          Write-Host "  FileVersion:      $($vi.FileVersion)"
-          Write-Host "  ProductVersion:   $($vi.ProductVersion)"
-          Write-Host "  FileDescription:  $($vi.FileDescription)"
-          Write-Host "  LegalCopyright:   $($vi.LegalCopyright)"
 
       - name: Prepare package
         shell: pwsh
@@ -216,11 +197,9 @@ jobs:
 
           Write-Host "== Сборка дистрибутива: $pkgName ==" -ForegroundColor Cyan
 
-          # Создаем структуру корневой папки архива
           New-Item -ItemType Directory -Force $pkgDir | Out-Null
           Copy-Item "dist/ama-gi-player.exe" "$pkgDir/ama-gi-player.exe"
 
-          # Создаем пустую папку bin в корне архива дистрибутива
           $binDir = "$pkgDir/bin"
           New-Item -ItemType Directory -Force $binDir | Out-Null
           $binReadmeLines = @(
@@ -228,37 +207,20 @@ jobs:
             "",
             "Сюда вы можете положить ваши исполняемые файлы зависимостей:",
             "  Aria2/aria2c.exe  — для скачивания",
-            "  Jackett/          — папка консольного релиза целиком (с JackettConsole.exe)",
-            "  Prowlarr/         — папка релиза целиком (с Prowlarr.exe)",
-            "",
-            "Приложение автоматически сканирует эту директорию при запуске согласно config.py."
+            "  Jackett/          — папка консольного релиза целиком",
+            "  Prowlarr/         — папка релиза целиком"
           )
           Set-Content -Path "$binDir/README.txt" -Value $binReadmeLines -Encoding UTF8
 
           $envLines = @(
             "# Amagi-Player — локальный конфиг",
-            "# Переименуйте этот файл в .env рядом с ama-gi-player.exe и заполните.",
-            "",
             "KP_API_KEY=",
             "ARIA2_SECRET="
           )
-          if (Test-Path ".env.example") {
-            Copy-Item ".env.example" "$pkgDir/.env.example"
-          } else {
-            Set-Content -Path "$pkgDir/.env.example" -Value $envLines -Encoding UTF8
-          }
+          Set-Content -Path "$pkgDir/.env.example" -Value $envLines -Encoding UTF8
 
-          if (Test-Path "INSTALL.md") {
-            Copy-Item "INSTALL.md" "$pkgDir/README.txt"
-          } elseif (Test-Path "README.md") {
-            Copy-Item "README.md" "$pkgDir/README.txt"
-          }
+          if (Test-Path "README.md") { Copy-Item "README.md" "$pkgDir/README.txt" }
 
-          if (Test-Path "LICENSE") {
-            Copy-Item "LICENSE" "$pkgDir/LICENSE.txt"
-          }
-
-          # Защитная валидация от утечки локальных файлов разработки в релиз
           $leaks = @(
             "$pkgDir/.env",
             "$pkgDir/data",
@@ -268,13 +230,10 @@ jobs:
           )
           foreach ($p in $leaks) {
             if (Test-Path $p) {
-              Write-Host "[ERROR] Критическая утечка локального файла в дистрибутив: $p" -ForegroundColor Red
+              Write-Host "[ERROR] Утечка локального файла: $p" -ForegroundColor Red
               exit 1
             }
           }
-
-          Write-Host "[OK] Структура релиза готова:" -ForegroundColor Green
-          Get-ChildItem -Recurse $pkgDir | Select-Object FullName, @{N="KB";E={[math]::Round($_.Length/1KB,1)}} | Format-Table -AutoSize
 
       - name: Package ZIP
         shell: pwsh
@@ -284,23 +243,8 @@ jobs:
           $pkgDir = "dist/amagi-player-v$version"
           $zip = "dist/amagi-player-v$version-windows.zip"
 
-          if (-not (Test-Path $pkgDir)) {
-            Write-Host "[ERROR] Папка дистрибутива не найдена" -ForegroundColor Red
-            exit 1
-          }
-
           Compress-Archive -Path "$pkgDir/*" -DestinationPath $zip -CompressionLevel Optimal -Force
-
-          if (-not (Test-Path $zip)) {
-            Write-Host "[ERROR] ZIP архив не был создан" -ForegroundColor Red
-            exit 1
-          }
-
-          $zipFile = Get-Item $zip
-          $sizeMB = [math]::Round($zipFile.Length / 1MB, 1)
-          Write-Host "[OK] $($zipFile.Name): $sizeMB MB" -ForegroundColor Green
-
-          # Копия exe отдельно
+          
           $exeCopy = "dist/amagi-player-v$version.exe"
           Copy-Item "dist/ama-gi-player.exe" $exeCopy
 
@@ -311,7 +255,6 @@ jobs:
           path: |
             dist/*.zip
             dist/amagi-player-v*.exe
-            dist/nuitka-report.xml
           if-no-files-found: error
           retention-days: 14
 
