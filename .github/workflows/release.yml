@@ -130,9 +130,8 @@ jobs:
             "--enable-plugin=pyqt6"
             "--include-module=PyQt6.QtWebEngineCore"
             "--include-module=PyQt6.QtWebEngineWidgets"
-            "--include-package=libtorrent"
-            "--include-package-data=libtorrent"
-            "--include-data-dir=data=data"
+            "--include-package=websockets"
+            "--include-module=qasync"
             "--include-data-file=ui/styles.qss=ui/styles.qss"
             "--windows-console-mode=disable"
             "--output-dir=dist"
@@ -195,10 +194,6 @@ jobs:
             exit 1
           }
 
-          if ($file.Length -gt 400MB) {
-            Write-Host "[WARN] exe очень большой ($sizeMB MB) — возможно, попал лишний мусор" -ForegroundColor Yellow
-          }
-
           Write-Host "[OK] $($file.Name): $sizeMB MB" -ForegroundColor Green
 
           $vi = $file.VersionInfo
@@ -211,10 +206,6 @@ jobs:
           Write-Host "  FileDescription:  $($vi.FileDescription)"
           Write-Host "  LegalCopyright:   $($vi.LegalCopyright)"
 
-          if ($vi.CompanyName -ne "AkashaForge") {
-            Write-Host "[WARN] CompanyName не совпадает с ожидаемым" -ForegroundColor Yellow
-          }
-
       - name: Prepare package
         shell: pwsh
         run: |
@@ -225,33 +216,30 @@ jobs:
 
           Write-Host "== Сборка дистрибутива: $pkgName ==" -ForegroundColor Cyan
 
+          # Создаем структуру корневой папки архива
           New-Item -ItemType Directory -Force $pkgDir | Out-Null
           Copy-Item "dist/ama-gi-player.exe" "$pkgDir/ama-gi-player.exe"
 
+          # Создаем пустую папку bin в корне архива дистрибутива
           $binDir = "$pkgDir/bin"
           New-Item -ItemType Directory -Force $binDir | Out-Null
           $binReadmeLines = @(
             "Amagi-Player — папка внешних утилит",
             "",
-            "Сюда кладите:",
-            "  aria2c.exe   — для скачивания",
-            "  ffmpeg.exe   — для транскодинга",
-            "  Jackett/     — папка целиком (индексаторы)",
-            "  Prowlarr/    — папка целиком (индексаторы)",
+            "Сюда вы можете положить ваши исполняемые файлы зависимостей:",
+            "  Aria2/aria2c.exe  — для скачивания",
+            "  Jackett/          — папка консольного релиза целиком (с JackettConsole.exe)",
+            "  Prowlarr/         — папка релиза целиком (с Prowlarr.exe)",
             "",
-            "Приложение ищет утилиты по пути:",
-            "  <папка_с_ama-gi-player.exe>\bin\<утилита>"
+            "Приложение автоматически сканирует эту директорию при запуске согласно config.py."
           )
           Set-Content -Path "$binDir/README.txt" -Value $binReadmeLines -Encoding UTF8
 
           $envLines = @(
             "# Amagi-Player — локальный конфиг",
-            "# Скопируйте этот файл в .env (рядом с ama-gi-player.exe) и заполните.",
+            "# Переименуйте этот файл в .env рядом с ama-gi-player.exe и заполните.",
             "",
-            "# API-ключ Кинопоиска (необязательно)",
             "KP_API_KEY=",
-            "",
-            "# Секрет aria2 (необязательно)",
             "ARIA2_SECRET="
           )
           if (Test-Path ".env.example") {
@@ -270,23 +258,22 @@ jobs:
             Copy-Item "LICENSE" "$pkgDir/LICENSE.txt"
           }
 
-          # Проверки на утечки
+          # Защитная валидация от утечки локальных файлов разработки в релиз
           $leaks = @(
             "$pkgDir/.env",
             "$pkgDir/data",
             "$pkgDir/sources.txt",
             "$pkgDir/yts_api_base.txt",
-            "$pkgDir/mode.txt",
-            "$pkgDir/switch_mode.py"
+            "$pkgDir/mode.txt"
           )
           foreach ($p in $leaks) {
             if (Test-Path $p) {
-              Write-Host "[ERROR] Утечка приватного файла: $p" -ForegroundColor Red
+              Write-Host "[ERROR] Критическая утечка локального файла в дистрибутив: $p" -ForegroundColor Red
               exit 1
             }
           }
 
-          Write-Host "[OK] Содержимое дистрибутива:" -ForegroundColor Green
+          Write-Host "[OK] Структура релиза готова:" -ForegroundColor Green
           Get-ChildItem -Recurse $pkgDir | Select-Object FullName, @{N="KB";E={[math]::Round($_.Length/1KB,1)}} | Format-Table -AutoSize
 
       - name: Package ZIP
@@ -298,14 +285,14 @@ jobs:
           $zip = "dist/amagi-player-v$version-windows.zip"
 
           if (-not (Test-Path $pkgDir)) {
-            Write-Host "[ERROR] $pkgDir не существует" -ForegroundColor Red
+            Write-Host "[ERROR] Папка дистрибутива не найдена" -ForegroundColor Red
             exit 1
           }
 
           Compress-Archive -Path "$pkgDir/*" -DestinationPath $zip -CompressionLevel Optimal -Force
 
           if (-not (Test-Path $zip)) {
-            Write-Host "[ERROR] ZIP не создан" -ForegroundColor Red
+            Write-Host "[ERROR] ZIP архив не был создан" -ForegroundColor Red
             exit 1
           }
 
@@ -313,11 +300,9 @@ jobs:
           $sizeMB = [math]::Round($zipFile.Length / 1MB, 1)
           Write-Host "[OK] $($zipFile.Name): $sizeMB MB" -ForegroundColor Green
 
-          # Дубликат exe для прямого скачивания
+          # Копия exe отдельно
           $exeCopy = "dist/amagi-player-v$version.exe"
           Copy-Item "dist/ama-gi-player.exe" $exeCopy
-          $exeSizeMB = [math]::Round((Get-Item $exeCopy).Length / 1MB, 1)
-          Write-Host "[OK] $((Get-Item $exeCopy).Name): $exeSizeMB MB" -ForegroundColor Green
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

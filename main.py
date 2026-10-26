@@ -77,6 +77,16 @@ if __name__ == "__main__":
     orchestrator = AmagiApplicationOrchestrator(loop)
     orchestrator.start_orchestration()
 
+    # --- ОБНОВЛЕНИЕ: Перехват закрытия окна ---
+    # Как только пользователь закрывает последнее окно интерфейса, 
+    # срабатывает этот лямбда-вызов: запускается очистка и прерывается цикл run_forever()
+    app.lastWindowClosed.connect(lambda: [
+        log.info("Окно закрыто пользователем. Запуск очистки процессов..."),
+        _atexit_cleanup(),
+        loop.stop()
+    ])
+    # ------------------------------------------
+
     try:
         loop.run_forever()
     except KeyboardInterrupt:
