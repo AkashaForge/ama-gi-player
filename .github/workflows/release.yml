@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Тег для релиза (например, v1.0.10)"
+        description: "Тег для релиза (например, v1.0.11)"
         required: true
         type: string
 
@@ -45,12 +45,22 @@ jobs:
           python -c "import libtorrent; print('libtorrent OK')"
           python -c "import aiohttp; print('aiohttp', aiohttp.__version__)"
           python -c "import aiohttp.resolver; print('aiohttp.resolver OK')"
-          python -c "import certifi; print('certifi:', certifi.where())"
+          python -c "import certifi, os; print('certifi:', os.path.dirname(certifi.__file__))"
           python -c "import ssl; print('ssl OK')"
           python -c "import nodriver; print('nodriver OK')"
           python -c "import psutil; print('psutil OK')"
           python -c "import qasync; print('qasync OK')"
           python -c "import websockets; print('websockets OK')"
+
+          # Явно проверить, что cacert.pem существует
+          $certifiDir = (& python -c "import certifi, os; print(os.path.dirname(certifi.__file__))").Trim()
+          $cacert = Join-Path $certifiDir "cacert.pem"
+          Write-Host "cacert.pem: $cacert"
+          if (-not (Test-Path $cacert)) {
+            Write-Host "[ERROR] cacert.pem не найден" -ForegroundColor Red
+            exit 1
+          }
+          Write-Host "[OK] cacert.pem найден ($((Get-Item $cacert).Length) bytes)" -ForegroundColor Green
 
       - name: Determine version
         id: version
@@ -88,6 +98,17 @@ jobs:
           $ErrorActionPreference = "Stop"
           $v4 = "${{ steps.version.outputs.version4 }}"
 
+          # Явный путь к cacert.pem для --include-data-files
+          $certifiDir = (& python -c "import certifi, os; print(os.path.dirname(certifi.__file__))").Trim()
+          $cacertPath = Join-Path $certifiDir "cacert.pem"
+          Write-Host "certifi dir: $certifiDir"
+          Write-Host "cacert.pem:  $cacertPath"
+
+          if (-not (Test-Path $cacertPath)) {
+            Write-Host "[ERROR] cacert.pem не найден" -ForegroundColor Red
+            exit 1
+          }
+
           $nuitkaArgs = @(
             "--onefile"
             "--enable-plugin=pyqt6"
@@ -100,8 +121,8 @@ jobs:
             "--include-package=aiohttp.client"
             "--include-package=aiohttp.web"
             "--include-package=aiohttp.resolver"
-            "--include-package=certifi"
-            "--include-package-data=certifi"
+            "--include-module=certifi"
+            "--include-data-files=$cacertPath=certifi/cacert.pem"
             "--include-package=websockets"
             "--include-package=qasync"
             "--include-package=psutil"
@@ -121,7 +142,10 @@ jobs:
             "main.py"
           )
 
+          Write-Host ""
           Write-Host "python -m nuitka $($nuitkaArgs -join ' ')" -ForegroundColor Gray
+          Write-Host ""
+
           & python -m nuitka $nuitkaArgs
           if ($LASTEXITCODE -ne 0) {
             Write-Host "[ERROR] Nuitka exit code: $LASTEXITCODE" -ForegroundColor Red
