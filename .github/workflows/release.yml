@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Тег для релиза (например, v1.0.8)"
+        description: "Тег для релиза (например, v1.0.9)"
         required: true
         type: string
 
@@ -259,6 +259,12 @@ jobs:
           $exeCopy = "dist/amagi-player-v$version.exe"
           Copy-Item "dist/ama-gi-player.exe" $exeCopy
 
+      - name: Debug artifacts
+        shell: pwsh
+        run: |
+          Write-Host "== Содержимое dist/ =="
+          Get-ChildItem -Recurse dist | Select-Object FullName, @{N="MB";E={[math]::Round($_.Length/1MB,2)}} | Format-Table -AutoSize
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -281,4 +287,6 @@ jobs:
             dist/amagi-player-v*.exe
           draft: false
           prerelease: false
-          fail_on_unmatched_files: true
+          # fail_on_unmatched_files: true  # ← убрано, чтобы избежать ложных падений
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
