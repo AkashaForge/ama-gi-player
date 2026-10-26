@@ -49,7 +49,7 @@ jobs:
           pip install nuitka ordered-set zstandard
 
           Write-Host "== Версии пакетов ==" -ForegroundColor Cyan
-          pip list | Select-String -Pattern "PyQt6|nuitka|libtorrent|aiohttp|nodriver|psutil|qasync|websockets"
+          pip list | Select-String -Pattern "PyQt6|nuitka|libtorrent|aiohttp|nodriver|psutil|qasync|websockets|certifi"
 
           Write-Host ""
           Write-Host "== Проверка импортов ==" -ForegroundColor Cyan
@@ -65,6 +65,7 @@ jobs:
           python -c "import psutil; print('psutil', psutil.__version__)"
           python -c "import qasync; print('qasync OK')"
           python -c "import websockets; print('websockets', websockets.__version__)"
+          python -c "import certifi; print('certifi', certifi.where())"
 
       - name: Determine version
         id: version
@@ -125,12 +126,24 @@ jobs:
           $nuitkaArgs = @(
             "--onefile"
             "--enable-plugin=pyqt6"
+            "--include-package=PyQt6"
             "--include-module=PyQt6.QtWebEngineCore"
             "--include-module=PyQt6.QtWebEngineWidgets"
+            "--include-package=libtorrent"
+            "--include-package-data=libtorrent"
+            "--include-package=aiohttp"
+            "--include-package=aiohttp.client"
+            "--include-package=aiohttp.web"
+            "--include-package=aiohttp.resolver"
+            "--include-package=certifi"
+            "--include-package-data=certifi"
             "--include-package=websockets"
-            "--include-module=qasync"
+            "--include-package=qasync"
+            "--include-package=psutil"
+            "--include-package=nodriver"
+            "--include-data-dir=data=data"
             "--include-data-file=ui/styles.qss=ui/styles.qss"
-            "--windows-console-mode=disable"
+            "--windows-console-mode=force"
             "--output-dir=dist"
             "--output-filename=ama-gi-player.exe"
             "--assume-yes-for-downloads"
@@ -169,8 +182,6 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $exe = "dist/ama-gi-player.exe"
-
-          Write-Host "== Проверка сборки ==" -ForegroundColor Cyan
 
           if (-not (Test-Path $exe)) {
             Write-Host "[ERROR] $exe не создан" -ForegroundColor Red
@@ -244,7 +255,7 @@ jobs:
           $zip = "dist/amagi-player-v$version-windows.zip"
 
           Compress-Archive -Path "$pkgDir/*" -DestinationPath $zip -CompressionLevel Optimal -Force
-          
+
           $exeCopy = "dist/amagi-player-v$version.exe"
           Copy-Item "dist/ama-gi-player.exe" $exeCopy
 
@@ -255,6 +266,7 @@ jobs:
           path: |
             dist/*.zip
             dist/amagi-player-v*.exe
+            dist/nuitka-report.xml
           if-no-files-found: error
           retention-days: 14
 
