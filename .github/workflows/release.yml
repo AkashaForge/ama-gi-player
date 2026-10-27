@@ -41,14 +41,51 @@ jobs:
           pip install nuitka ordered-set zstandard
 
           Write-Host "== Verify imports ==" -ForegroundColor Cyan
-          python -c "import PyQt6; print('PyQt6 OK')"
+          python -c "import PyQt6.QtWidgets, PyQt6.QtMultimedia, PyQt6.QtMultimediaWidgets; print('PyQt6 media OK')"
+          python -c "import PyQt6.QtWebEngineWidgets; print('WebEngine OK')"
           python -c "import libtorrent; print('libtorrent OK')"
           python -c "import aiohttp; print('aiohttp OK')"
-          python -c "import qasync; print('qasync OK')"
-          python -c "import psutil; print('psutil OK')"
-          python -c "import websockets; print('websockets OK')"
-          python -c "import nodriver; print('nodriver OK')"
+          python -c "import qasync, psutil, websockets, nodriver; print('rest OK')"
           Write-Host "All dependencies installed" -ForegroundColor Green
+
+      - name: Sanity-check whitelist_seed.db
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not (Test-Path "data\whitelist_seed.db")) {
+            Write-Host "[ERROR] data\whitelist_seed.db отсутствует" -ForegroundColor Red
+            exit 1
+          }
+          $count = & python -c "import sqlite3; print(sqlite3.connect(r'data/whitelist_seed.db').execute('SELECT COUNT(*) FROM movie_whitelist').fetchone()[0])"
+          $withIa = & python -c "import sqlite3; print(sqlite3.connect(r'data/whitelist_seed.db').execute(\"SELECT COUNT(*) FROM movie_whitelist WHERE archive_identifier != ''\").fetchone()[0])"
+          Write-Host "whitelist_seed.db: $count фильмов, $withIa с archive_identifier" -ForegroundColor Cyan
+          if ([int]$count -eq 0) {
+            Write-Host "[ERROR] whitelist_seed.db пуст. Запустите локально:" -ForegroundColor Red
+            Write-Host "  python tools/make_seed.py --rebuild --concurrency 5" -ForegroundColor Yellow
+            Write-Host "и закоммитьте data/whitelist_seed.db + data/seed_posters/" -ForegroundColor Yellow
+            exit 1
+          }
+          if ([int]$withIa -eq 0) {
+            Write-Host "[WARN] Нет ни одного фильма с archive_identifier — в PUBLIC-режиме нечего играть" -ForegroundColor Yellow
+            Write-Host "       Запустите: python tools/verify_whitelist.py --reset" -ForegroundColor Yellow
+          }
+
+      - name: Locate QtMultimedia plugins
+        id: qtmm
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pyqt6Dir = (& python -c "import PyQt6, os; print(os.path.dirname(PyQt6.__file__))").Trim()
+          $mmPlugin = Join-Path $pyqt6Dir "Qt6\plugins\multimedia"
+          if (-not (Test-Path $mmPlugin)) {
+            Write-Host "[ERROR] QtMultimedia plugin folder not found: $mmPlugin" -ForegroundColor Red
+            Get-ChildItem $pyqt6Dir -Recurse -Directory -Filter "multimedia" | Select-Object FullName | Out-Host
+            exit 1
+          }
+          $files = Get-ChildItem $mmPlugin -Filter "*.dll"
+          Write-Host "[OK] multimedia plugins ($($files.Count) dll):" -ForegroundColor Green
+          $files | Select-Object Name | Format-Table
+          "plugin_dir=$mmPlugin" >> $env:GITHUB_OUTPUT
 
       - name: Determine version
         id: version
@@ -78,6 +115,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $v4 = "${{ steps.version.outputs.version4 }}"
+          $mmPlugin = "${{ steps.qtmm.outputs.plugin_dir }}"
 
           $nuitkaArgs = @(
             "--standalone"
@@ -91,9 +129,11 @@ jobs:
             "--include-package=qasync"
             "--include-package=psutil"
             "--include-package=nodriver"
+            "--include-data-dir=$mmPlugin=PyQt6/Qt6/plugins/multimedia"
             "--include-data-dir=data=data"
             "--include-data-dir=ui=ui"
             "--windows-console-mode=force"
+            "--show-scons"
             "--output-dir=dist"
             "--output-filename=amagi-player.exe"
             "--assume-yes-for-downloads"
@@ -127,7 +167,37 @@ jobs:
             exit 1
           }
           $mb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
-          Write-Host "[OK] exe: $mb MB" -ForegroundColor Green
+          $distMB = [math]::Round((Get-ChildItem "dist\main.dist" -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB, 1)
+          Write-Host "[OK] exe: $mb MB | main.dist: $distMB MB" -ForegroundColor Green
+
+          # --- multimedia plugin ---
+          $mmPath = "dist\main.dist\PyQt6\Qt6\plugins\multimedia"
+          if (-not (Test-Path $mmPath)) {
+            Write-Host "[ERROR] multimedia plugin missing in dist: $mmPath" -ForegroundColor Red
+            exit 1
+          }
+          $mmDlls = Get-ChildItem $mmPath -Filter "*.dll"
+          if ($mmDlls.Count -eq 0) {
+            Write-Host "[ERROR] multimedia folder empty in dist" -ForegroundColor Red
+            exit 1
+          }
+          Write-Host "[OK] multimedia plugins in dist ($($mmDlls.Count)):" -ForegroundColor Green
+          $mmDlls | Select-Object Name | Format-Table
+
+          # --- Qt6 DLLs ---
+          Write-Host "`n== Qt6 DLLs ==" -ForegroundColor Cyan
+          Get-ChildItem "dist\main.dist" -Filter "Qt6*.dll" | Select-Object Name | Format-Table
+
+          # --- WebEngine resources ---
+          Write-Host "`n== WebEngine resources ==" -ForegroundColor Cyan
+          $weFound = $false
+          Get-ChildItem "dist\main.dist" -Recurse -Filter "qtwebengine_resources.pak" -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "[OK] $($_.FullName)" -ForegroundColor Green
+            $weFound = $true
+          }
+          if (-not $weFound) {
+            Write-Host "[WARN] qtwebengine_resources.pak not found — PRIVATE setup wizard may fail" -ForegroundColor Yellow
+          }
 
       - name: Prepare distribution
         shell: pwsh
@@ -152,12 +222,12 @@ jobs:
           )
           Set-Content -Path (Join-Path $bin "README.txt") -Value $binLines -Encoding UTF8
 
-          # ---- Clean personal files from data\ ----
+          # ---- Удаляем ТОЛЬКО персональные файлы ----
+          # whitelist.db НЕ удаляем — наоборот, заменим на seed ниже
           $personal = @(
             "sources.txt","sources.txt.bak",
             "direct_sources.txt","direct_sources.txt.bak",
             "indexers.txt","mode.txt",
-            "whitelist.db","whitelist.db-wal","whitelist.db-shm","whitelist.db.private.bak",
             "app_data.db","app_data.db-wal","app_data.db-shm",
             "yts_api_base.txt","yts_api_base.txt.private.bak"
           )
@@ -166,36 +236,57 @@ jobs:
             if (Test-Path $p) { Remove-Item $p -Force }
           }
 
+          # ---- Формируем рабочий whitelist.db из whitelist_seed.db ----
+          $seedDb = Join-Path $data "whitelist_seed.db"
+          $workDb = Join-Path $data "whitelist.db"
+          if (-not (Test-Path $seedDb)) {
+            Write-Host "[ERROR] whitelist_seed.db отсутствует в dist\data\" -ForegroundColor Red
+            exit 1
+          }
+          # Убираем возможные WAL/SHM от предыдущих прогонов
+          foreach ($sfx in @("", "-wal", "-shm")) {
+            $p = "$workDb$sfx"
+            if (Test-Path $p) { Remove-Item $p -Force }
+          }
+          Copy-Item $seedDb $workDb
+          $seedCount = & python -c "import sqlite3; print(sqlite3.connect(r'$seedDb').execute('SELECT COUNT(*) FROM movie_whitelist').fetchone()[0])"
+          Write-Host "[OK] whitelist.db <- whitelist_seed.db ($seedCount фильмов)" -ForegroundColor Green
+
+          # Проставить available=1 для NULL, как делает apply_seed.py
+          & python -c "import sqlite3; c=sqlite3.connect(r'$workDb'); c.execute('UPDATE movie_whitelist SET available=1 WHERE available IS NULL'); c.commit(); c.close()"
+
           # ---- config.example.txt ----
           $cfgLines = @(
             "# Amagi-Player - local config",
-            "# Copy to config.txt (or create .env next to exe)",
+            "# Copy to .env next to exe",
             "KP_API_KEY=",
             "ARIA2_SECRET="
           )
           Set-Content -Path (Join-Path $dist "config.example.txt") -Value $cfgLines -Encoding UTF8
 
-          # ---- README.txt for end user ----
+          # ---- README.txt ----
           $readmeLines = @(
             "Amagi-Player - how to run",
             "==========================",
             "",
             "1. Run amagi-player.exe",
             "2. Accept the terms on first launch",
-            "3. data\ and bin\ folders will be created automatically",
-            "4. Configure sources via data\sources.txt (template: data\sources.example.txt)",
-            "5. API keys go to .env next to exe (template: .env.example)",
+            "3. data\ and bin\ folders are used as-is from this ZIP",
+            "4. Sources: data\sources.txt (template: data\sources.example.txt)",
+            "5. API keys: .env next to exe (template: config.example.txt)",
             "",
-            "Mode: data\mode.txt -> public | private"
+            "Mode: data\mode.txt -> public | private (default: public)"
           )
           Set-Content -Path (Join-Path $dist "README.txt") -Value $readmeLines -Encoding UTF8
 
-          # ---- Docs (optional) ----
           if (Test-Path "README.md") { Copy-Item "README.md" (Join-Path $dist "README.md") }
           if (Test-Path "LICENSE")   { Copy-Item "LICENSE"   (Join-Path $dist "LICENSE") }
           if (Test-Path "NOTICE")    { Copy-Item "NOTICE"    (Join-Path $dist "NOTICE") }
 
-          Write-Host "=== Final structure ===" -ForegroundColor Cyan
+          Write-Host "`n=== data\ contents ===" -ForegroundColor Cyan
+          Get-ChildItem $data | Select-Object Name, Length | Format-Table
+
+          Write-Host "`n=== main.dist top-level ===" -ForegroundColor Cyan
           Get-ChildItem $dist | Select-Object Name | Format-Table
 
       - name: Create ZIP
