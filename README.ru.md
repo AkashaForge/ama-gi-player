@@ -1,4 +1,4 @@
-[ru Русский](README.ru.md) | [🇬🇧 English](README.md)
+[🇬🇧 English](README.md) | [🇷🇺 Русский](README.ru.md)
 
 <div align="center">
 
@@ -10,30 +10,28 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)]()
 
-[![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)]()
-
 </div>
 
-## Screenshots
+## Скриншоты
 
-### Dark theme
+### Тёмная тема
 
 <div align="center">
 
 | | |
 |---|---|
-| ![Dark 1](docs/screenshots/dark-01.png) | ![Dark 2](docs/screenshots/dark-02.png) |
-| ![Dark 3](docs/screenshots/dark-03.png) | ![Dark 4](docs/screenshots/dark-04.png) |
+| ![Тёмная 1](docs/screenshots/dark-01.png) | ![Тёмная 2](docs/screenshots/dark-02.png) |
+| ![Тёмная 3](docs/screenshots/dark-03.png) | ![Тёмная 4](docs/screenshots/dark-04.png) |
 
 </div>
 
-### Light theme
+### Светлая тема
 
 <div align="center">
 
 | | |
 |---|---|
-| ![Light 1](docs/screenshots/light-01.png) | ![Light 2](docs/screenshots/light-02.png) |
+| ![Светлая 1](docs/screenshots/light-01.png) | ![Светлая 2](docs/screenshots/light-02.png) |
 
 </div>
 
@@ -70,6 +68,8 @@ Amagi-Player использует штатные механизмы Internet Arc
 - Встроенный плеер: пауза, перемотка, полный экран
 - Функция «Продолжить просмотр» с локальной историей
 - Кэш постеров и метаданных
+- Две темы интерфейса: тёмная (OLED) и светлая (Aurora Glass)
+- Двуязычный интерфейс (русский / английский)
 
 ### Экспериментальные функции (private — тестовый, для разработчиков)
 
@@ -93,12 +93,6 @@ Amagi-Player использует штатные механизмы Internet Arc
 - **Контроль дочерних процессов**: автоматическое завершение
   «повисших» процессов через `psutil`
 - Изолированный запуск внешних утилит с контролем времени жизни
-
-### Интерфейс
-
-- Тёмная минималистичная тема на **PyQt6**
-- Работает «из коробки» на Windows
-- Распространение в виде ZIP-архива с exe-файлом
 
 ---
 
@@ -261,6 +255,13 @@ pip install -r requirements.txt
 python main.py
 ```
 
+### Для разработки
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
 ---
 
 ## Использование
@@ -290,16 +291,16 @@ python main.py
 ### Метаданные (опционально)
 
 Для расширенных метаданных фильмов (описание, постеры) может
-использоваться публичный API Кинопоиска. Ключ задаётся в файле
-`.env` рядом с `amagi-player.exe`:
+использоваться публичный API Кинопоиска — **только в режиме
+`private`**. Ключ задаётся в файле `.env` рядом
+с `amagi-player.exe`:
 
 ```text
 KP_API_KEY=ваш_ключ
 ```
 
-Без ключа приложение работает с Internet Archive, но описания
-и постеры могут быть неполными. В логе будет строка
-`KP_API_KEY не задан — демо-режим`.
+В режиме `public` API Кинопоиска не используется — приложение
+работает полностью с Internet Archive.
 
 ---
 
@@ -311,7 +312,6 @@ KP_API_KEY=ваш_ключ
 | Строка в логе | Что означает |
 |---|---|
 | `Режим: PUBLIC (legal-only)` | Работает публичный режим (норма) |
-| `KP_API_KEY не задан — демо-режим` | Нет ключа Кинопоиска (опционально) |
 | `Лента: page=N, M фильмов` | Лента загружена |
 | `IA query: ...` | Запрос к Internet Archive |
 | `IA итог: N direct_url` | Найдено N результатов |
@@ -334,6 +334,8 @@ ama-gi-player/
 │   ├── whitelist.db      # Рабочая база (создаётся при первом запуске)
 │   └── cache/            # Кэш постеров и метаданных
 ├── database/             # Локальная БД (история, кэш)
+├── docs/
+│   └── screenshots/      # Скриншоты для README
 ├── search/               # Движок поиска
 ├── services/             # Внешние сервисы
 ├── tests/                # Тесты (pytest)
@@ -358,6 +360,7 @@ Amagi-Player распространяется под **GNU General Public Licens
 - Атрибуция — [`NOTICE`](NOTICE)
 - Политика подписи кода — [`CODE_SIGNING_POLICY.md`](CODE_SIGNING_POLICY.md)
 - Политика безопасности — [`SECURITY.md`](SECURITY.md)
+- Политика конфиденциальности — [`PRIVACY.ru.md`](PRIVACY.ru.md)
 - Условия использования и политика конфиденциальности показываются
   при первом запуске (см. `legal_texts.py`)
 
