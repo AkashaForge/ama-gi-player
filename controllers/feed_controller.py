@@ -1,5 +1,12 @@
-"""
-Контроллер ленты. Постеры: cache → seed → archive.org → KP fallback.
+"""Контроллер ленты.
+
+v2.0.8:
+  - в конце load_feed:
+    * has_more=True  → флаг сбрасывается в _on_scroll_moved при
+      пересчёте max_scroll (защита от цикла пагинации);
+    * has_more=False → feed_page.mark_end_reached() — блокирует
+      новые emit, пока пользователь не начнёт новый поиск;
+  - run_search вызывает feed_page.mark_end_not_reached().
 """
 
 import asyncio
@@ -21,7 +28,7 @@ _KP_MIN_INTERVAL = 1.5
 _KP_COOLDOWN_429_SEC = 60.0
 _MIN_POSTER_BYTES = 2000
 
-_SLUG_RE = re.compile(r'[^a-z0-9]+')
+_SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
 def _make_slug(title: str, year: str = "") -> str:
@@ -59,15 +66,18 @@ class FeedController:
         self._search_generation = 0
         self._kp_last_request = 0.0
         self._kp_cooldown_until = 0.0
+        self._db_stats_logged = False
 
     async def load_feed(self, clear_grid: bool = False):
         if clear_grid:
             self.main_window.feed_page.clear_grid()
+            self._db_stats_logged = False
 
         generation = self._search_generation
         query = self.main_window.search_bar.text().strip()
 
         if config.DISABLE_WHITELIST:
+            # === PRIVATE: KP API ===
             if query:
                 movies = await self.kp_service.search_movies_by_keyword(
                     self.session, query, page=self.current_page
@@ -78,23 +88,30 @@ class FeedController:
                 )
             has_more = len(movies) >= PAGE_SIZE
         else:
+            # === PUBLIC: whitelist DB ===
             offset = (self.current_page - 1) * PAGE_SIZE
             movies = self._build_movies_from_whitelist(
                 query, limit=PAGE_SIZE, offset=offset
             )
             has_more = len(movies) >= PAGE_SIZE
 
+            if (not self._db_stats_logged
+                    and not query
+                    and self.current_page == 1):
+                self._log_db_stats()
+                self._db_stats_logged = True
+
         if generation != self._search_generation:
+            self.main_window.feed_page.reset_loading_state()
             return
 
         log.info(
             "Лента: page=%d, %d фильмов (mode=%s, query='%s', has_more=%s)",
             self.current_page, len(movies),
-            "public" if not config.DISABLE_WHITELIST else "dev",
+            "public" if not config.DISABLE_WHITELIST else "private",
             query or "-", has_more,
         )
 
-        # === «Ничего не найдено» ===
         if not movies and clear_grid and query:
             log.info("Поиск '%s' — ничего не найдено", query)
             try:
@@ -126,10 +143,35 @@ class FeedController:
                     )
                 )
 
-        if has_more:
-            self.main_window.feed_page.reset_loading_state()
-        else:
-            log.info("Больше страниц нет (page=%d)", self.current_page)
+        # === Ключевой фикс: has_more ===
+        # False → блокируем emit до нового поиска (нет цикла)
+        # True  → флаг сбросится автоматически в _on_scroll_moved,
+        #         когда layout пересчитает max_scroll
+        if not has_more:
+            self.main_window.feed_page.mark_end_reached()
+            log.info(
+                "Больше страниц нет (page=%d), лента закрыта",
+                self.current_page,
+            )
+
+    def _log_db_stats(self):
+        try:
+            total = WhitelistRepository.count()
+            avail = WhitelistRepository.count_available()
+            unverified = WhitelistRepository.count_unverified()
+            log.info(
+                "БД: всего=%d, available=1: %d, available=NULL: %d",
+                total, avail, unverified,
+            )
+            if avail < total:
+                log.warning(
+                    "ВНИМАНИЕ: %d фильмов имеют available != 1 "
+                    "и не показываются в public-режиме.",
+                    total - avail,
+                )
+        except Exception as e:
+            log.debug("_log_db_stats: %s", e)
+
     def _build_movies_from_whitelist(
         self, query: str, limit: int, offset: int
     ) -> list[dict]:
@@ -229,8 +271,10 @@ class FeedController:
                 with open(cache_path, "wb") as f:
                     f.write(content)
             await self.loop.run_in_executor(None, write)
-            log.info("Постер IA: %s (%d KB)",
-                     archive_id, len(content) // 1024)
+            log.info(
+                "Постер IA: %s (%d KB)",
+                archive_id, len(content) // 1024,
+            )
             return True
         except Exception as e:
             log.debug("IA thumb %s: %s", archive_id, e)
@@ -290,16 +334,20 @@ class FeedController:
                 with open(cache_path, "wb") as f:
                     f.write(content)
             await self.loop.run_in_executor(None, write)
-            log.info("Постер KP: kp_id=%d (%d KB)",
-                     kp_id, len(content) // 1024)
+            log.info(
+                "Постер KP: kp_id=%d (%d KB)",
+                kp_id, len(content) // 1024,
+            )
             return True
         except Exception as e:
             log.debug("KP download: %s", e)
             return False
 
     async def _kp_search(self, query: str) -> list[dict]:
-        url = ("https://kinopoiskapiunofficial.tech"
-               "/api/v2.1/films/search-by-keyword")
+        url = (
+            "https://kinopoiskapiunofficial.tech"
+            "/api/v2.1/films/search-by-keyword"
+        )
         headers = {
             "X-API-KEY": config.KP_API_KEY,
             "Accept": "application/json",
@@ -315,8 +363,10 @@ class FeedController:
                     self._kp_cooldown_until = (
                         time.time() + _KP_COOLDOWN_429_SEC
                     )
-                    log.warning("KP: 429 — cooldown %.0fs",
-                                _KP_COOLDOWN_429_SEC)
+                    log.warning(
+                        "KP: 429 — cooldown %.0fs",
+                        _KP_COOLDOWN_429_SEC,
+                    )
                     return []
                 if resp.status != 200:
                     return []
@@ -338,6 +388,9 @@ class FeedController:
     def run_search(self):
         self._search_generation += 1
         self.current_page = 1
+        # Сброс конца ленты и флагов — новый поиск может дать другие данные
+        self.main_window.feed_page.mark_end_not_reached()
+        self.main_window.feed_page.reset_loading_state()
         self.loop.create_task(self.load_feed(clear_grid=True))
 
     def load_next_page(self):
