@@ -32,6 +32,9 @@ jobs:
           python-version: "3.13"
           cache: "pip"
 
+      # ---------------------------------------------------------------
+      # 1. Установка зависимостей + PyQt6-Tools для multimedia DLL
+      # ---------------------------------------------------------------
       - name: Install dependencies
         shell: pwsh
         run: |
@@ -39,15 +42,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install nuitka ordered-set zstandard
+          # PyQt6-Tools содержит ffmpegmediaplugin.dll и зависимые av*/sw* DLL
+          pip install PyQt6-Tools
 
           Write-Host "== Verify imports ==" -ForegroundColor Cyan
-          python -c "import PyQt6.QtWidgets, PyQt6.QtMultimedia, PyQt6.QtMultimediaWidgets; print('PyQt6 media OK')"
+          python -c "import PyQt6.QtWidgets; print('PyQt6 widgets OK')"
+          python -c "import PyQt6.QtMultimedia; print('PyQt6 multimedia OK')"
           python -c "import PyQt6.QtWebEngineWidgets; print('WebEngine OK')"
           python -c "import libtorrent; print('libtorrent OK')"
           python -c "import aiohttp; print('aiohttp OK')"
           python -c "import qasync, psutil, websockets, nodriver; print('rest OK')"
           Write-Host "All dependencies installed" -ForegroundColor Green
 
+      # ---------------------------------------------------------------
+      # 2. Проверка seed-базы (до сборки, чтобы не ждать 20 минут зря)
+      # ---------------------------------------------------------------
       - name: Sanity-check whitelist_seed.db
         shell: pwsh
         run: |
@@ -56,9 +65,9 @@ jobs:
             Write-Host "[ERROR] data\whitelist_seed.db missing" -ForegroundColor Red
             exit 1
           }
-          $count = (& python -c 'import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute("SELECT COUNT(*) FROM movie_whitelist").fetchone()[0])' "data/whitelist_seed.db").Trim()
+          $count = (& python -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('SELECT COUNT(*) FROM movie_whitelist').fetchone()[0])" "data/whitelist_seed.db").Trim()
           if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] python query failed" -ForegroundColor Red; exit 1 }
-          $withIa = (& python -c 'import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute("SELECT COUNT(*) FROM movie_whitelist WHERE length(archive_identifier) > 0").fetchone()[0])' "data/whitelist_seed.db").Trim()
+          $withIa = (& python -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('SELECT COUNT(*) FROM movie_whitelist WHERE length(archive_identifier) > 0').fetchone()[0])" "data/whitelist_seed.db").Trim()
           if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] python query failed" -ForegroundColor Red; exit 1 }
           Write-Host "whitelist_seed.db: $count films, $withIa with archive_identifier" -ForegroundColor Cyan
           if ([int]$count -eq 0) {
@@ -69,26 +78,6 @@ jobs:
           if ([int]$withIa -eq 0) {
             Write-Host "[WARN] no films with archive_identifier - PUBLIC mode will have nothing to play" -ForegroundColor Yellow
           }
-
-      - name: Locate QtMultimedia plugins
-        id: qtmm
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $pyqt6Dir = (& python -c "import PyQt6, os; print(os.path.dirname(PyQt6.__file__))").Trim()
-          $mmPlugin = Join-Path $pyqt6Dir "Qt6\plugins\multimedia"
-          if (-not (Test-Path $mmPlugin)) {
-            Write-Host "[ERROR] QtMultimedia plugins folder not found: $mmPlugin" -ForegroundColor Red
-            exit 1
-          }
-          $dlls = Get-ChildItem $mmPlugin -Filter "*.dll"
-          if ($dlls.Count -eq 0) {
-            Write-Host "[ERROR] multimedia plugin folder empty: $mmPlugin" -ForegroundColor Red
-            exit 1
-          }
-          Write-Host "[OK] multimedia plugins ($($dlls.Count)):" -ForegroundColor Green
-          $dlls | Select-Object Name | Format-Table
-          "plugin_dir=$mmPlugin" >> $env:GITHUB_OUTPUT
 
       - name: Determine version
         id: version
@@ -113,17 +102,21 @@ jobs:
           "version4=$version4" >> $env:GITHUB_OUTPUT
           Write-Host "Tag=$tag Version=$version Version4=$version4"
 
+      # ---------------------------------------------------------------
+      # 3. Сборка Nuitka
+      #    Ключевое: --include-qt-plugins=multimedia (не include-data-dir!)
+      # ---------------------------------------------------------------
       - name: Build with Nuitka (standalone)
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $v4 = "${{ steps.version.outputs.version4 }}"
-          $mmPlugin = "${{ steps.qtmm.outputs.plugin_dir }}"
 
           $nuitkaArgs = @(
             "--standalone"
             "--enable-plugin=pyqt6"
             "--include-package=PyQt6"
+            "--include-qt-plugins=multimedia"
             "--include-module=PyQt6.QtWebEngineCore"
             "--include-module=PyQt6.QtWebEngineWidgets"
             "--include-package=libtorrent"
@@ -132,7 +125,6 @@ jobs:
             "--include-package=qasync"
             "--include-package=psutil"
             "--include-package=nodriver"
-            "--include-data-dir=$mmPlugin=PyQt6/Qt6/plugins/multimedia"
             "--include-data-dir=data=data"
             "--include-data-dir=ui=ui"
             "--windows-console-mode=force"
@@ -159,7 +151,10 @@ jobs:
             exit $LASTEXITCODE
           }
 
-      - name: Verify standalone build
+      # ---------------------------------------------------------------
+      # 4. Проверка, что multimedia DLL реально попали в dist
+      # ---------------------------------------------------------------
+      - name: Verify QtMultimedia in dist
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -173,22 +168,40 @@ jobs:
           $distMB = [math]::Round((Get-ChildItem "dist\main.dist" -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB, 1)
           Write-Host "[OK] exe: $mb MB | main.dist: $distMB MB" -ForegroundColor Green
 
-          $mmPath = "dist\main.dist\PyQt6\Qt6\plugins\multimedia"
-          if (-not (Test-Path $mmPath)) {
-            Write-Host "[ERROR] multimedia plugin missing in dist: $mmPath" -ForegroundColor Red
+          # QtMultimedia plugins могут оказаться в разных местах — ищем по имени
+          $mmFiles = Get-ChildItem "dist\main.dist" -Recurse -Filter "*mediaplugin.dll" -ErrorAction SilentlyContinue
+          if ($mmFiles.Count -eq 0) {
+            Write-Host "[ERROR] No multimedia plugin DLL found in dist!" -ForegroundColor Red
+            Write-Host "Expected ffmpegmediaplugin.dll or windowsmediaplugin.dll somewhere in main.dist" -ForegroundColor Yellow
+            Write-Host "Searching for any 'multimedia' dir:" -ForegroundColor Yellow
+            Get-ChildItem "dist\main.dist" -Recurse -Directory -Filter "multimedia" | Select-Object FullName | Out-Host
             exit 1
           }
-          $mmDlls = Get-ChildItem $mmPath -Filter "*.dll"
-          if ($mmDlls.Count -eq 0) {
-            Write-Host "[ERROR] multimedia folder empty in dist" -ForegroundColor Red
-            exit 1
+          Write-Host "[OK] multimedia plugins in dist ($($mmFiles.Count)):" -ForegroundColor Green
+          $mmFiles | Select-Object FullName | Format-Table
+
+          # Проверка зависимых av*/sw* DLL (если ffmpeg-бэкенд)
+          $ffmpegDlls = Get-ChildItem "dist\main.dist" -Recurse -Filter "avcodec-*.dll" -ErrorAction SilentlyContinue
+          if ($ffmpegDlls.Count -gt 0) {
+            Write-Host "[OK] ffmpeg backend DLLs found ($($ffmpegDlls.Count))" -ForegroundColor Green
+          } else {
+            Write-Host "[WARN] No avcodec-*.dll found — ffmpeg backend may fail, relying on windowsmediaplugin" -ForegroundColor Yellow
           }
-          Write-Host "[OK] multimedia plugins in dist ($($mmDlls.Count)):" -ForegroundColor Green
-          $mmDlls | Select-Object Name | Format-Table
 
-          Write-Host "`n== Qt6 DLLs ==" -ForegroundColor Cyan
-          Get-ChildItem "dist\main.dist" -Filter "Qt6*.dll" | Select-Object Name | Format-Table
+          # QtWebEngine resources
+          Write-Host "`n== WebEngine resources ==" -ForegroundColor Cyan
+          $weFound = $false
+          Get-ChildItem "dist\main.dist" -Recurse -Filter "qtwebengine_resources.pak" -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "[OK] $($_.FullName)" -ForegroundColor Green
+            $weFound = $true
+          }
+          if (-not $weFound) {
+            Write-Host "[WARN] qtwebengine_resources.pak not found — PRIVATE setup wizard may fail" -ForegroundColor Yellow
+          }
 
+      # ---------------------------------------------------------------
+      # 5. Подготовка дистрибутива: bin/, whitelist.db, конфиги
+      # ---------------------------------------------------------------
       - name: Prepare distribution
         shell: pwsh
         run: |
@@ -238,11 +251,11 @@ jobs:
           }
           Copy-Item $seedDb $workDb
 
-          $seedCount = (& python -c 'import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute("SELECT COUNT(*) FROM movie_whitelist").fetchone()[0])' $workDb).Trim()
+          $seedCount = (& python -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('SELECT COUNT(*) FROM movie_whitelist').fetchone()[0])" $workDb).Trim()
           if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] query whitelist.db failed" -ForegroundColor Red; exit 1 }
           Write-Host "[OK] whitelist.db <- whitelist_seed.db ($seedCount films)" -ForegroundColor Green
 
-          & python -c 'import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute("UPDATE movie_whitelist SET available=1 WHERE available IS NULL"); c.commit(); c.close()' $workDb
+          & python -c "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('UPDATE movie_whitelist SET available=1 WHERE available IS NULL'); c.commit(); c.close()" $workDb
           if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] update available failed" -ForegroundColor Red; exit 1 }
 
           # ---- config.example.txt ----
@@ -279,6 +292,9 @@ jobs:
           Write-Host "`n=== main.dist top-level ===" -ForegroundColor Cyan
           Get-ChildItem $dist | Select-Object Name | Format-Table
 
+      # ---------------------------------------------------------------
+      # 6. ZIP + Release
+      # ---------------------------------------------------------------
       - name: Create ZIP
         shell: pwsh
         run: |
