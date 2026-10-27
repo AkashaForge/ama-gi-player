@@ -1,4 +1,4 @@
-name: Release
+name: Build and Release
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Тег для релиза (например, v1.0.11)"
+        description: "Тег для релиза (например, v1.2.0)"
         required: true
         type: string
 
@@ -16,11 +16,14 @@ permissions:
 
 jobs:
   build-windows:
-    name: Build and release
+    name: Build standalone and release
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
+      # ---------------------------------------------------------------
+      # 1. Окружение
+      # ---------------------------------------------------------------
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -43,162 +46,176 @@ jobs:
           Write-Host "== Проверка пакетов ==" -ForegroundColor Cyan
           python -c "import PyQt6.QtWebEngineWidgets; print('WebEngine OK')"
           python -c "import libtorrent; print('libtorrent OK')"
-          python -c "import aiohttp; print('aiohttp', aiohttp.__version__)"
-          python -c "import aiohttp.resolver; print('aiohttp.resolver OK')"
-          python -c "import certifi, os; print('certifi:', os.path.dirname(certifi.__file__))"
-          python -c "import ssl; print('ssl OK')"
+          python -c "import aiohttp; print('aiohttp OK')"
+          python -c "import aiohttp.resolver; print('resolver OK')"
           python -c "import nodriver; print('nodriver OK')"
-          python -c "import psutil; print('psutil OK')"
-          python -c "import qasync; print('qasync OK')"
-          python -c "import websockets; print('websockets OK')"
-
-          # Явно проверить, что cacert.pem существует
-          $certifiDir = (& python -c "import certifi, os; print(os.path.dirname(certifi.__file__))").Trim()
-          $cacert = Join-Path $certifiDir "cacert.pem"
-          Write-Host "cacert.pem: $cacert"
-          if (-not (Test-Path $cacert)) {
-            Write-Host "[ERROR] cacert.pem не найден" -ForegroundColor Red
-            exit 1
-          }
-          Write-Host "[OK] cacert.pem найден ($((Get-Item $cacert).Length) bytes)" -ForegroundColor Green
+          python -c "import qasync, psutil, websockets, certifi; print('misc OK')"
+          Write-Host "Все зависимости установлены" -ForegroundColor Green
 
       - name: Determine version
         id: version
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-
           if ("${{ github.event.inputs.tag }}" -ne "") {
             $tag = "${{ github.event.inputs.tag }}"
           } else {
             $tag = "$env:GITHUB_REF_NAME"
           }
-
           if ([string]::IsNullOrWhiteSpace($tag)) {
             Write-Host "[ERROR] Не удалось определить тег" -ForegroundColor Red
             exit 1
           }
-
           $version = $tag -replace '^v', ''
           $parts = @($version.Split('.'))
           while ($parts.Count -lt 4) { $parts += "0" }
           $version4 = ($parts | Select-Object -First 4) -join '.'
 
-          Write-Host "Tag:      $tag"
-          Write-Host "Version:  $version"
-          Write-Host "Version4: $version4"
-
-          "tag=$tag" >> $env:GITHUB_OUTPUT
-          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag"           >> $env:GITHUB_OUTPUT
+          "version=$version"   >> $env:GITHUB_OUTPUT
           "version4=$version4" >> $env:GITHUB_OUTPUT
+          Write-Host "Tag=$tag  Version=$version  Version4=$version4"
 
-      - name: Build with Nuitka (console for diagnostics)
+      # ---------------------------------------------------------------
+      # 2. Сборка --standalone
+      # ---------------------------------------------------------------
+      - name: Build with Nuitka (standalone)
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $v4 = "${{ steps.version.outputs.version4 }}"
 
-          # Явный путь к cacert.pem для --include-data-files
           $certifiDir = (& python -c "import certifi, os; print(os.path.dirname(certifi.__file__))").Trim()
           $cacertPath = Join-Path $certifiDir "cacert.pem"
-          Write-Host "certifi dir: $certifiDir"
-          Write-Host "cacert.pem:  $cacertPath"
-
           if (-not (Test-Path $cacertPath)) {
-            Write-Host "[ERROR] cacert.pem не найден" -ForegroundColor Red
+            Write-Host "[ERROR] cacert.pem не найден: $cacertPath" -ForegroundColor Red
             exit 1
           }
+          Write-Host "cacert.pem: $cacertPath"
 
-          $nuitkaArgs = @(
-            "--onefile"
-            "--enable-plugin=pyqt6"
-            "--include-package=PyQt6"
-            "--include-module=PyQt6.QtWebEngineCore"
-            "--include-module=PyQt6.QtWebEngineWidgets"
-            "--include-package=libtorrent"
-            "--include-package-data=libtorrent"
-            "--include-package=aiohttp"
-            "--include-package=aiohttp.client"
-            "--include-package=aiohttp.web"
-            "--include-package=aiohttp.resolver"
-            "--include-module=certifi"
-            "--include-data-files=$cacertPath=certifi/cacert.pem"
-            "--include-package=websockets"
-            "--include-package=qasync"
-            "--include-package=psutil"
-            "--include-package=nodriver"
-            "--include-data-dir=data=data"
-            "--include-data-file=ui/styles.qss=ui/styles.qss"
-            "--windows-console-mode=force"
-            "--output-dir=dist"
-            "--output-filename=ama-gi-player.exe"
-            "--assume-yes-for-downloads"
-            "--company-name=AkashaForge"
-            "--product-name=Amagi-Player"
-            "--file-version=$v4"
-            "--product-version=$v4"
-            "--file-description=Amagi-Player"
-            "--report=dist/nuitka-report.xml"
-            "main.py"
-          )
+          python -m nuitka `
+            --standalone `
+            --enable-plugin=pyqt6 `
+            --include-package=PyQt6 `
+            --include-module=PyQt6.QtWebEngineCore `
+            --include-module=PyQt6.QtWebEngineWidgets `
+            --include-package=libtorrent `
+            --include-package-data=libtorrent `
+            --include-package=aiohttp `
+            --include-package=aiohttp.client `
+            --include-package=aiohttp.web `
+            --include-package=aiohttp.resolver `
+            --include-module=certifi `
+            --include-data-files="$cacertPath"=certifi/cacert.pem `
+            --include-package=websockets `
+            --include-package=qasync `
+            --include-package=psutil `
+            --include-package=nodriver `
+            --include-data-dir=data=data `
+            --include-data-dir=ui=ui `
+            --include-data-files=README.md=. `
+            --include-data-files=LICENSE=. `
+            --windows-console-mode=force `
+            --output-dir=dist `
+            --output-filename=amagi-player.exe `
+            --assume-yes-for-downloads `
+            --company-name=AkashaForge `
+            --product-name=Amagi-Player `
+            --file-version=$v4 `
+            --product-version=$v4 `
+            --file-description=Amagi-Player `
+            --report=dist/nuitka-report.xml `
+            main.py
 
-          Write-Host ""
-          Write-Host "python -m nuitka $($nuitkaArgs -join ' ')" -ForegroundColor Gray
-          Write-Host ""
-
-          & python -m nuitka $nuitkaArgs
           if ($LASTEXITCODE -ne 0) {
-            Write-Host "[ERROR] Nuitka exit code: $LASTEXITCODE" -ForegroundColor Red
+            Write-Host "[ERROR] Nuitka exit=$LASTEXITCODE" -ForegroundColor Red
             exit $LASTEXITCODE
           }
 
-      - name: Verify exe
+      - name: Verify standalone build
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          if (-not (Test-Path "dist/ama-gi-player.exe")) {
-            Write-Host "[ERROR] exe not created" -ForegroundColor Red
+          $exe = "dist\main.dist\amagi-player.exe"
+          if (-not (Test-Path $exe)) {
+            Write-Host "[ERROR] exe не создан" -ForegroundColor Red
             Get-ChildItem -Recurse dist | Out-Host
             exit 1
           }
-          $mb = [math]::Round((Get-Item "dist/ama-gi-player.exe").Length / 1MB, 1)
+          $mb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
           Write-Host "[OK] exe: $mb MB" -ForegroundColor Green
 
-      - name: Prepare package
+      # ---------------------------------------------------------------
+      # 3. Подготовка релизной структуры (bin/, config, чистка)
+      # ---------------------------------------------------------------
+      - name: Prepare distribution (bin, data, config)
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $version = "${{ steps.version.outputs.version }}"
-          $pkg = "dist/amagi-player-v$version"
+          $dist = "dist\main.dist"
 
-          New-Item -ItemType Directory -Force $pkg | Out-Null
-          Copy-Item "dist/ama-gi-player.exe" "$pkg/ama-gi-player.exe"
+          # --- bin/ ---
+          $bin = Join-Path $dist "bin"
+          New-Item -ItemType Directory -Force -Path $bin | Out-Null
+          $binReadme = @"
+          Amagi-Player - папка внешних утилит
+          ===================================
 
-          New-Item -ItemType Directory -Force "$pkg/bin" | Out-Null
-          Set-Content -Path "$pkg/bin/README.txt" -Encoding UTF8 -Value @(
-            "Amagi-Player — папка внешних утилит",
-            "",
-            "Сюда кладите:",
-            "  Aria2/aria2c.exe",
-            "  Jackett/  (папка целиком)",
-            "  Prowlarr/ (папка целиком)"
+          Сюда (по желанию) кладите:
+            Aria2\aria2c.exe
+            Jackett\  (папка целиком)
+            Prowlarr\ (папка целиком)
+
+          В PUBLIC-режиме эти утилиты не используются.
+          "@
+          Set-Content -Path (Join-Path $bin "README.txt") -Value $binReadme -Encoding UTF8
+
+          # --- Чистка персональных файлов из data\ ---
+          $data = Join-Path $dist "data"
+          $personal = @(
+            "sources.txt","sources.txt.bak",
+            "direct_sources.txt","direct_sources.txt.bak",
+            "indexers.txt","mode.txt",
+            "whitelist.db","whitelist.db-wal","whitelist.db-shm","whitelist.db.private.bak",
+            "app_data.db","app_data.db-wal","app_data.db-shm",
+            "yts_api_base.txt","yts_api_base.txt.private.bak"
           )
-
-          Set-Content -Path "$pkg/.env.example" -Encoding UTF8 -Value @(
-            "# Amagi-Player — локальный конфиг",
-            "KP_API_KEY=",
-            "ARIA2_SECRET="
-          )
-
-          if (Test-Path "README.md") {
-            Copy-Item "README.md" "$pkg/README.txt"
+          foreach ($f in $personal) {
+            $p = Join-Path $data $f
+            if (Test-Path $p) { Remove-Item $p -Force }
           }
 
-          Copy-Item "dist/ama-gi-player.exe" "dist/amagi-player-v$version.exe"
+          # --- config.example.txt ---
+          $cfgExample = @"
+          # Amagi-Player - локальная конфигурация
+          # Скопируйте в config.txt и заполните (или создайте .env рядом с exe)
+          KP_API_KEY=
+          ARIA2_SECRET=
+          "@
+          Set-Content -Path (Join-Path $dist "config.example.txt") -Value $cfgExample -Encoding UTF8
 
-          Write-Host "Содержимое пакета:" -ForegroundColor Cyan
-          Get-ChildItem -Recurse $pkg | Select-Object FullName | Out-Host
+          # --- README.txt для конечного пользователя ---
+          $runReadme = @"
+          Amagi-Player - как запустить
+          =============================
 
+          1. Запустите amagi-player.exe
+          2. При первом запуске примите условия использования
+          3. Папки data\ и bin\ создадутся автоматически
+          4. Источники настраиваются через data\sources.txt
+             (шаблон: data\sources.example.txt)
+          5. Ключи API задаются в .env рядом с exe (шаблон: .env.example)
+
+          Режим работы задаётся в data\mode.txt: public | private
+          "@
+          Set-Content -Path (Join-Path $dist "README.txt") -Value $runReadme -Encoding UTF8
+
+          Write-Host "=== Финальная структура ===" -ForegroundColor Cyan
+          Get-ChildItem $dist | Select-Object Name | Format-Table
+
+      # ---------------------------------------------------------------
+      # 4. ZIP + артефакты + релиз
+      # ---------------------------------------------------------------
       - name: Create ZIP
         shell: pwsh
         run: |
@@ -206,13 +223,12 @@ jobs:
           $version = "${{ steps.version.outputs.version }}"
           $zip = "dist/amagi-player-v$version-windows.zip"
 
-          Compress-Archive -Path "dist/amagi-player-v$version/*" -DestinationPath $zip -Force
+          Compress-Archive -Path "dist/main.dist/*" -DestinationPath $zip -Force
 
           if (-not (Test-Path $zip)) {
-            Write-Host "[ERROR] ZIP not created" -ForegroundColor Red
+            Write-Host "[ERROR] ZIP не создан" -ForegroundColor Red
             exit 1
           }
-
           $mb = [math]::Round((Get-Item $zip).Length / 1MB, 1)
           Write-Host "[OK] $zip ($mb MB)" -ForegroundColor Green
 
@@ -222,19 +238,17 @@ jobs:
           name: release-files
           path: |
             dist/*.zip
-            dist/amagi-player-v*.exe
             dist/nuitka-report.xml
           if-no-files-found: error
           retention-days: 14
 
       - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: "Amagi-Player ${{ steps.version.outputs.tag }}"
           generate_release_notes: true
-          files: |
-            dist/amagi-player-v${{ steps.version.outputs.version }}-windows.zip
-            dist/amagi-player-v${{ steps.version.outputs.version }}.exe
+          files: dist/amagi-player-v${{ steps.version.outputs.version }}-windows.zip
           draft: false
           prerelease: false
