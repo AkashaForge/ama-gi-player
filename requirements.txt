@@ -1,0 +1,11 @@
+aiohttp==3.14.5
+libtorrent==2.1.1
+nodriver==0.38.post1
+psutil==7.2.2
+PyQt6==6.11.0
+PyQt6-Qt6==6.11.2
+PyQt6-WebEngine==6.11.0
+PyQt6-WebEngine-Qt6==6.11.2
+PyQt6_sip==13.13.0
+qasync==0.28.0
+websockets==13.1

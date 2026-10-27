@@ -1,0 +1,274 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g., v1.2.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build standalone and release
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install nuitka ordered-set zstandard
+
+          Write-Host "== Verify imports ==" -ForegroundColor Cyan
+          python -c "import PyQt6.QtWidgets; print('PyQt6 widgets OK')"
+          python -c "import PyQt6.QtMultimedia; print('PyQt6 multimedia OK')"
+          python -c "import PyQt6.QtWebEngineWidgets; print('WebEngine OK')"
+          python -c "import libtorrent; print('libtorrent OK')"
+          python -c "import aiohttp; print('aiohttp OK')"
+          python -c "import qasync, psutil, websockets, nodriver; print('rest OK')"
+
+      - name: Diagnose QtMultimedia plugins
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pluginsPath = (& python -c "from PyQt6.QtCore import QLibraryInfo; print(QLibraryInfo.path(QLibraryInfo.LibraryPath.PluginsPath))").Trim()
+          Write-Host "Qt plugins path: $pluginsPath" -ForegroundColor Cyan
+          $mmPath = Join-Path $pluginsPath "multimedia"
+          if (Test-Path $mmPath) {
+            $dlls = Get-ChildItem $mmPath -Filter "*.dll" -ErrorAction SilentlyContinue
+            Write-Host "[INFO] $mmPath : $($dlls.Count) dll" -ForegroundColor Cyan
+            if ($dlls.Count -gt 0) { $dlls | Select-Object Name | Format-Table }
+            else { Write-Host "[WARN] multimedia dir empty" -ForegroundColor Yellow }
+          } else {
+            Write-Host "[WARN] no multimedia subdir at $mmPath" -ForegroundColor Yellow
+          }
+          $pyqt6Dir = (& python -c "import PyQt6, os; print(os.path.dirname(PyQt6.__file__))").Trim()
+          Write-Host "`n== Search *mediaplugin.dll under PyQt6 ==" -ForegroundColor Cyan
+          Get-ChildItem $pyqt6Dir -Recurse -Filter "*mediaplugin.dll" -ErrorAction SilentlyContinue | Select-Object FullName | Format-Table
+
+      - name: Sanity-check whitelist_seed.db
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not (Test-Path "data\whitelist_seed.db")) {
+            Write-Host "[ERROR] data\whitelist_seed.db missing" -ForegroundColor Red
+            exit 1
+          }
+          $count = (& python -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('SELECT COUNT(*) FROM movie_whitelist').fetchone()[0])" "data/whitelist_seed.db").Trim()
+          $withIa = (& python -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('SELECT COUNT(*) FROM movie_whitelist WHERE length(archive_identifier) > 0').fetchone()[0])" "data/whitelist_seed.db").Trim()
+          Write-Host "whitelist_seed.db: $count films, $withIa with archive_identifier" -ForegroundColor Cyan
+          if ([int]$count -eq 0) {
+            Write-Host "[ERROR] whitelist_seed.db empty. Run locally:" -ForegroundColor Red
+            Write-Host "  python tools/make_seed.py --rebuild --concurrency 5" -ForegroundColor Yellow
+            exit 1
+          }
+
+      - name: Determine version
+        id: version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ("${{ github.event.inputs.tag }}" -ne "") {
+            $tag = "${{ github.event.inputs.tag }}"
+          } else {
+            $tag = "$env:GITHUB_REF_NAME"
+          }
+          $version = $tag -replace '^v', ''
+          $parts = @($version.Split('.'))
+          while ($parts.Count -lt 4) { $parts += "0" }
+          $version4 = ($parts | Select-Object -First 4) -join '.'
+          "tag=$tag"           >> $env:GITHUB_OUTPUT
+          "version=$version"   >> $env:GITHUB_OUTPUT
+          "version4=$version4" >> $env:GITHUB_OUTPUT
+          Write-Host "Tag=$tag Version=$version Version4=$version4"
+
+      - name: Build with Nuitka (standalone)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $v4 = "${{ steps.version.outputs.version4 }}"
+
+          $nuitkaArgs = @(
+            "--standalone"
+            "--enable-plugin=pyqt6"
+            "--include-package=PyQt6"
+            "--include-qt-plugins=multimedia"
+            "--include-module=PyQt6.QtWebEngineCore"
+            "--include-module=PyQt6.QtWebEngineWidgets"
+            "--include-package=libtorrent"
+            "--include-package=aiohttp"
+            "--include-package=websockets"
+            "--include-package=qasync"
+            "--include-package=psutil"
+            "--include-package=nodriver"
+            "--include-data-dir=data=data"
+            "--include-data-dir=ui=ui"
+            "--windows-console-mode=force"
+            "--show-scons"
+            "--output-dir=dist"
+            "--output-filename=amagi-player.exe"
+            "--assume-yes-for-downloads"
+            "--company-name=AkashaForge"
+            "--product-name=Amagi-Player"
+            "--file-version=$v4"
+            "--product-version=$v4"
+            "--file-description=Amagi-Player"
+            "--report=dist/nuitka-report.xml"
+            "main.py"
+          )
+
+          Write-Host ""
+          Write-Host "python -m nuitka $($nuitkaArgs -join ' ')" -ForegroundColor Gray
+          Write-Host ""
+          python -m nuitka @nuitkaArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify QtMultimedia in dist
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = "dist\main.dist\amagi-player.exe"
+          if (-not (Test-Path $exe)) { Write-Host "[ERROR] exe not built" -ForegroundColor Red; exit 1 }
+          $mb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
+          $distMB = [math]::Round((Get-ChildItem "dist\main.dist" -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB, 1)
+          Write-Host "[OK] exe: $mb MB | main.dist: $distMB MB" -ForegroundColor Green
+
+          $mmFiles = Get-ChildItem "dist\main.dist" -Recurse -Filter "*mediaplugin.dll" -ErrorAction SilentlyContinue
+          if ($mmFiles.Count -eq 0) {
+            Write-Host "[ERROR] No multimedia plugin DLL in dist!" -ForegroundColor Red
+            Get-ChildItem "dist\main.dist" -Recurse -Directory -Filter "multimedia" | Select-Object FullName | Out-Host
+            exit 1
+          }
+          Write-Host "[OK] multimedia plugins ($($mmFiles.Count)):" -ForegroundColor Green
+          $mmFiles | Select-Object FullName | Format-Table
+
+          $ffmpegDlls = Get-ChildItem "dist\main.dist" -Recurse -Filter "avcodec-*.dll" -ErrorAction SilentlyContinue
+          if ($ffmpegDlls.Count -gt 0) {
+            Write-Host "[OK] ffmpeg backend DLLs ($($ffmpegDlls.Count))" -ForegroundColor Green
+          } else {
+            Write-Host "[WARN] No avcodec-*.dll — ffmpeg backend may not work" -ForegroundColor Yellow
+          }
+
+      - name: Prepare distribution
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $dist = "dist\main.dist"
+          $data = Join-Path $dist "data"
+          $bin  = Join-Path $dist "bin"
+
+          New-Item -ItemType Directory -Force -Path $bin | Out-Null
+          @(
+            "Amagi-Player - external utilities folder",
+            "=========================================",
+            "",
+            "Optional: place here",
+            "  Aria2\aria2c.exe",
+            "  Jackett\  (whole folder)",
+            "  Prowlarr\ (whole folder)",
+            "",
+            "Not used in PUBLIC mode."
+          ) | Set-Content -Path (Join-Path $bin "README.txt") -Encoding UTF8
+
+          $personal = @(
+            "sources.txt","sources.txt.bak",
+            "direct_sources.txt","direct_sources.txt.bak",
+            "indexers.txt","mode.txt",
+            "app_data.db","app_data.db-wal","app_data.db-shm",
+            "yts_api_base.txt","yts_api_base.txt.private.bak"
+          )
+          foreach ($f in $personal) {
+            $p = Join-Path $data $f
+            if (Test-Path $p) { Remove-Item $p -Force }
+          }
+
+          $seedDb = Join-Path $data "whitelist_seed.db"
+          $workDb = Join-Path $data "whitelist.db"
+          if (-not (Test-Path $seedDb)) { Write-Host "[ERROR] seed missing" -ForegroundColor Red; exit 1 }
+          foreach ($sfx in @("", "-wal", "-shm")) {
+            $p = "$workDb$sfx"
+            if (Test-Path $p) { Remove-Item $p -Force }
+          }
+          Copy-Item $seedDb $workDb
+          $seedCount = (& python -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('SELECT COUNT(*) FROM movie_whitelist').fetchone()[0])" $workDb).Trim()
+          Write-Host "[OK] whitelist.db <- whitelist_seed.db ($seedCount films)" -ForegroundColor Green
+          & python -c "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('UPDATE movie_whitelist SET available=1 WHERE available IS NULL'); c.commit(); c.close()" $workDb
+
+          @(
+            "# Amagi-Player - local config",
+            "# Copy to .env next to exe",
+            "KP_API_KEY=",
+            "ARIA2_SECRET="
+          ) | Set-Content -Path (Join-Path $dist "config.example.txt") -Encoding UTF8
+
+          @(
+            "Amagi-Player - how to run",
+            "==========================",
+            "",
+            "1. Run amagi-player.exe",
+            "2. Accept the terms on first launch",
+            "3. data\ and bin\ are used as-is from this ZIP",
+            "4. Sources: data\sources.txt (template: data\sources.example.txt)",
+            "5. API keys: .env next to exe (template: config.example.txt)",
+            "",
+            "Mode: data\mode.txt -> public | private (default: public)"
+          ) | Set-Content -Path (Join-Path $dist "README.txt") -Encoding UTF8
+
+          if (Test-Path "README.md") { Copy-Item "README.md" (Join-Path $dist "README.md") }
+          if (Test-Path "LICENSE")   { Copy-Item "LICENSE"   (Join-Path $dist "LICENSE") }
+          if (Test-Path "NOTICE")    { Copy-Item "NOTICE"    (Join-Path $dist "NOTICE") }
+
+          Write-Host "`n=== data\ contents ===" -ForegroundColor Cyan
+          Get-ChildItem $data | Select-Object Name, Length | Format-Table
+
+      - name: Create ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "${{ steps.version.outputs.version }}"
+          $zip = "dist/amagi-player-v$version-windows.zip"
+          Compress-Archive -Path "dist/main.dist/*" -DestinationPath $zip -Force
+          $mb = [math]::Round((Get-Item $zip).Length / 1MB, 1)
+          Write-Host "[OK] $zip ($mb MB)" -ForegroundColor Green
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-files
+          path: |
+            dist/*.zip
+            dist/nuitka-report.xml
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "Amagi-Player ${{ steps.version.outputs.tag }}"
+          generate_release_notes: true
+          files: dist/amagi-player-v${{ steps.version.outputs.version }}-windows.zip
+          draft: false
+          prerelease: false

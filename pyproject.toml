@@ -1,0 +1,36 @@
+[project]
+name = "ama-gi-player"
+version = "2.0.0"
+requires-python = ">=3.10"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+exclude = [".venv", "bin", "data", "__pycache__"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "C4", "UP"]
+ignore = [
+    "E501",   # line too long — уже был
+    "B008",   # function call in default argument — уже был
+    "B007",   # unused loop control variable — намеренно оставляем как есть
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "B011"]
+"tools/make_seed.py" = ["E402"]   # импорты после sys.path.insert — намеренно
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+exclude = '\.venv|bin|data'
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+exclude = '\.venv|bin|data'
