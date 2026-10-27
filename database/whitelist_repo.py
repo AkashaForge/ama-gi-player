@@ -1,4 +1,14 @@
-"""Репозиторий для whitelist.db."""
+"""Репозиторий для whitelist.db.
+
+v2.0.7:
+  - search_movies_in_feed: упрощён — единый WHERE (available = 1
+    OR available IS NULL) в public-режиме, вместо двухступенчатого
+    fallback. Старая логика приводила к «стопору» ленты на ~40:
+    на offset=40 fallback возвращал те же записи, что уже были
+    показаны на page 1 (см. комментарий в методе).
+  - добавлен DISTINCT в выборку — страховка от дублей kp_id.
+  - count_in_feed работает по той же схеме.
+"""
 
 import config
 from core.logging_setup import get_logger
@@ -9,6 +19,9 @@ log = get_logger("whitelist_repo")
 
 class WhitelistRepository:
 
+    # ==================================================================
+    #  Счётчики
+    # ==================================================================
     @staticmethod
     def count() -> int:
         with use_whitelist_connection() as conn:
@@ -20,14 +33,16 @@ class WhitelistRepository:
     def count_available() -> int:
         with use_whitelist_connection() as conn:
             return conn.execute(
-                "SELECT COUNT(*) AS c FROM movie_whitelist WHERE available = 1;"
+                "SELECT COUNT(*) AS c FROM movie_whitelist "
+                "WHERE available = 1;"
             ).fetchone()["c"]
 
     @staticmethod
     def count_unavailable() -> int:
         with use_whitelist_connection() as conn:
             return conn.execute(
-                "SELECT COUNT(*) AS c FROM movie_whitelist WHERE available = 0;"
+                "SELECT COUNT(*) AS c FROM movie_whitelist "
+                "WHERE available = 0;"
             ).fetchone()["c"]
 
     @staticmethod
@@ -38,39 +53,55 @@ class WhitelistRepository:
                 "WHERE available IS NULL;"
             ).fetchone()["c"]
 
+    # ==================================================================
+    #  Публичный поиск по ленте (public) — единый запрос
+    # ==================================================================
     @staticmethod
     def search_movies_in_feed(
         query: str = "", limit: int = 20, offset: int = 0,
     ) -> list[int]:
+        """
+        Возвращает kp_id для ленты, страницами.
+
+        v2.0.7: убран двухступенчатый fallback. Раньше логика была:
+          1. available = 1  (строго)
+          2. если пусто → (available = 1 OR available IS NULL)
+        Это ломалось на offset=N, когда available=1 фильмы — это,
+        скажем, отрицательные kp_id (pseudo), а available=NULL —
+        положительные. В общем списке (available=1 OR NULL)
+        ORDER BY kp_id DESC положительные идут раньше отрицательных,
+        поэтому fallback на offset=40 возвращал те же записи, что
+        уже были на page 1. Дедупликация в UI их отсеивала →
+        визуально «стоп» на 40.
+
+        Сейчас всегда используется один WHERE:
+          (available = 1 OR available IS NULL)
+        Пагинация непрерывна, дублей между страницами нет.
+        """
         q = (query or "").strip()
         legal_only = getattr(config, "LEGAL_ONLY_MODE", True)
 
         if legal_only:
-            ids = WhitelistRepository._query_ids(
-                where="available = 1", query=q,
-                limit=limit, offset=offset,
-            )
-            if ids:
-                return ids
-            if offset == 0:
-                log.warning(
-                    "search_movies_in_feed: 0 verified. Fallback на "
-                    "available IS NULL."
-                )
+            where = "(available = 1 OR available IS NULL)"
+        else:
+            where = "available = 1"
 
         return WhitelistRepository._query_ids(
-            where="(available = 1 OR available IS NULL)",
-            query=q, limit=limit, offset=offset,
+            where=where, query=q, limit=limit, offset=offset,
         )
+
     @staticmethod
-    def _query_ids(where: str, query: str, limit: int, offset: int) -> list[int]:
+    def _query_ids(
+        where: str, query: str, limit: int, offset: int
+    ) -> list[int]:
         q = (query or "").strip()
         with use_whitelist_connection() as conn:
             if q:
-                # PYNORM — зарегистрирован в whitelist_db._connect()
-                # корректно обрабатывает кириллицу (SQLite LOWER() не умеет)
+                # PYNORM регистрируется в whitelist_db._connect() и
+                # корректно обрабатывает кириллицу (SQLite LOWER()
+                # не умеет этого для Unicode)
                 sql = f"""
-                    SELECT kp_id FROM movie_whitelist
+                    SELECT DISTINCT kp_id FROM movie_whitelist
                     WHERE {where}
                       AND (
                           PYNORM(title_ru) LIKE ?
@@ -81,51 +112,61 @@ class WhitelistRepository:
                     LIMIT ? OFFSET ?;
                 """
                 qn = q.lower().replace("ё", "е")
-                params = (f"%{qn}%", f"%{qn}%", f"%{q}%", limit, offset)
+                params = (
+                    f"%{qn}%", f"%{qn}%", f"%{q}%", limit, offset,
+                )
             else:
                 sql = f"""
-                    SELECT kp_id FROM movie_whitelist
+                    SELECT DISTINCT kp_id FROM movie_whitelist
                     WHERE {where}
                     ORDER BY kp_id DESC
                     LIMIT ? OFFSET ?;
                 """
                 params = (limit, offset)
-            return [row["kp_id"] for row in conn.execute(sql, params).fetchall()]
+            return [
+                row["kp_id"]
+                for row in conn.execute(sql, params).fetchall()
+            ]
 
-
+    # ==================================================================
+    #  Кол-во результатов поиска (для «ничего не найдено»)
+    # ==================================================================
     @staticmethod
     def count_in_feed(query: str = "") -> int:
-        """Кол-во результатов поиска (для отображения 'ничего не найдено')."""
         q = (query or "").strip()
         legal_only = getattr(config, "LEGAL_ONLY_MODE", True)
+        where = (
+            "(available = 1 OR available IS NULL)"
+            if legal_only
+            else "available = 1"
+        )
 
-        def _count(where: str) -> int:
-            with use_whitelist_connection() as conn:
-                if q:
-                    sql = f"""
-                        SELECT COUNT(*) AS c FROM movie_whitelist
-                        WHERE {where}
-                          AND (
-                              PYNORM(title_ru) LIKE ?
-                              OR PYNORM(title_en) LIKE ?
-                              OR year LIKE ?
-                          );
-                    """
-                    qn = q.lower().replace("ё", "е")
-                    params = (f"%{qn}%", f"%{qn}%", f"%{q}%")
-                else:
-                    sql = f"""
-                        SELECT COUNT(*) AS c FROM movie_whitelist
-                        WHERE {where};
-                    """
-                    params = ()
-                return conn.execute(sql, params).fetchone()["c"]
+        with use_whitelist_connection() as conn:
+            if q:
+                sql = f"""
+                    SELECT COUNT(DISTINCT kp_id) AS c
+                    FROM movie_whitelist
+                    WHERE {where}
+                      AND (
+                          PYNORM(title_ru) LIKE ?
+                          OR PYNORM(title_en) LIKE ?
+                          OR year LIKE ?
+                      );
+                """
+                qn = q.lower().replace("ё", "е")
+                params = (f"%{qn}%", f"%{qn}%", f"%{q}%")
+            else:
+                sql = f"""
+                    SELECT COUNT(DISTINCT kp_id) AS c
+                    FROM movie_whitelist
+                    WHERE {where};
+                """
+                params = ()
+            return conn.execute(sql, params).fetchone()["c"]
 
-        if legal_only:
-            n = _count("available = 1")
-            if n > 0:
-                return n
-        return _count("(available = 1 OR available IS NULL)")
+    # ==================================================================
+    #  Одиночные записи
+    # ==================================================================
     @staticmethod
     def get_movie(kp_id: int) -> dict | None:
         with use_whitelist_connection() as conn:
@@ -161,9 +202,14 @@ class WhitelistRepository:
             )
             return [dict(row) for row in cur.fetchall()]
 
+    # ==================================================================
+    #  CRUD
+    # ==================================================================
     @staticmethod
-    def add_movie(kp_id: int, title_ru: str, title_en: str = "",
-                  year: str = "", archive_identifier: str = "") -> bool:
+    def add_movie(
+        kp_id: int, title_ru: str, title_en: str = "",
+        year: str = "", archive_identifier: str = "",
+    ) -> bool:
         try:
             with use_whitelist_connection() as conn:
                 conn.execute(
@@ -228,12 +274,16 @@ class WhitelistRepository:
             log.warning("update_archive_identifier: %s", e)
             return False
 
+    # ==================================================================
+    #  Верификация / модерация
+    # ==================================================================
     @staticmethod
     def get_pending_ids() -> list[dict]:
         with use_whitelist_connection() as conn:
             cur = conn.execute(
                 "SELECT kp_id, title_ru, title_en, year "
-                "FROM movie_whitelist WHERE kp_id < 0 ORDER BY kp_id DESC;"
+                "FROM movie_whitelist WHERE kp_id < 0 "
+                "ORDER BY kp_id DESC;"
             )
             return [dict(row) for row in cur.fetchall()]
 
@@ -259,7 +309,8 @@ class WhitelistRepository:
     def mark_available(kp_id: int) -> None:
         with use_whitelist_connection() as conn:
             conn.execute(
-                "UPDATE movie_whitelist SET available = 1 WHERE kp_id = ?;",
+                "UPDATE movie_whitelist SET available = 1 "
+                "WHERE kp_id = ?;",
                 (kp_id,),
             )
 
@@ -267,7 +318,8 @@ class WhitelistRepository:
     def mark_unavailable(kp_id: int) -> None:
         with use_whitelist_connection() as conn:
             conn.execute(
-                "UPDATE movie_whitelist SET available = 0 WHERE kp_id = ?;",
+                "UPDATE movie_whitelist SET available = 0 "
+                "WHERE kp_id = ?;",
                 (kp_id,),
             )
 
