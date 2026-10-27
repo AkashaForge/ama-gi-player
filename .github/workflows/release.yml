@@ -53,21 +53,21 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           if (-not (Test-Path "data\whitelist_seed.db")) {
-            Write-Host "[ERROR] data\whitelist_seed.db отсутствует" -ForegroundColor Red
+            Write-Host "[ERROR] data\whitelist_seed.db missing" -ForegroundColor Red
             exit 1
           }
-          $count = & python -c "import sqlite3; print(sqlite3.connect(r'data/whitelist_seed.db').execute('SELECT COUNT(*) FROM movie_whitelist').fetchone()[0])"
-          $withIa = & python -c "import sqlite3; print(sqlite3.connect(r'data/whitelist_seed.db').execute(\"SELECT COUNT(*) FROM movie_whitelist WHERE archive_identifier != ''\").fetchone()[0])"
-          Write-Host "whitelist_seed.db: $count фильмов, $withIa с archive_identifier" -ForegroundColor Cyan
+          $count = (& python -c 'import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute("SELECT COUNT(*) FROM movie_whitelist").fetchone()[0])' "data/whitelist_seed.db").Trim()
+          if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] python query failed" -ForegroundColor Red; exit 1 }
+          $withIa = (& python -c 'import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute("SELECT COUNT(*) FROM movie_whitelist WHERE length(archive_identifier) > 0").fetchone()[0])' "data/whitelist_seed.db").Trim()
+          if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] python query failed" -ForegroundColor Red; exit 1 }
+          Write-Host "whitelist_seed.db: $count films, $withIa with archive_identifier" -ForegroundColor Cyan
           if ([int]$count -eq 0) {
-            Write-Host "[ERROR] whitelist_seed.db пуст. Запустите локально:" -ForegroundColor Red
+            Write-Host "[ERROR] whitelist_seed.db is empty. Run locally:" -ForegroundColor Red
             Write-Host "  python tools/make_seed.py --rebuild --concurrency 5" -ForegroundColor Yellow
-            Write-Host "и закоммитьте data/whitelist_seed.db + data/seed_posters/" -ForegroundColor Yellow
             exit 1
           }
           if ([int]$withIa -eq 0) {
-            Write-Host "[WARN] Нет ни одного фильма с archive_identifier — в PUBLIC-режиме нечего играть" -ForegroundColor Yellow
-            Write-Host "       Запустите: python tools/verify_whitelist.py --reset" -ForegroundColor Yellow
+            Write-Host "[WARN] no films with archive_identifier - PUBLIC mode will have nothing to play" -ForegroundColor Yellow
           }
 
       - name: Locate QtMultimedia plugins
@@ -78,13 +78,16 @@ jobs:
           $pyqt6Dir = (& python -c "import PyQt6, os; print(os.path.dirname(PyQt6.__file__))").Trim()
           $mmPlugin = Join-Path $pyqt6Dir "Qt6\plugins\multimedia"
           if (-not (Test-Path $mmPlugin)) {
-            Write-Host "[ERROR] QtMultimedia plugin folder not found: $mmPlugin" -ForegroundColor Red
-            Get-ChildItem $pyqt6Dir -Recurse -Directory -Filter "multimedia" | Select-Object FullName | Out-Host
+            Write-Host "[ERROR] QtMultimedia plugins folder not found: $mmPlugin" -ForegroundColor Red
             exit 1
           }
-          $files = Get-ChildItem $mmPlugin -Filter "*.dll"
-          Write-Host "[OK] multimedia plugins ($($files.Count) dll):" -ForegroundColor Green
-          $files | Select-Object Name | Format-Table
+          $dlls = Get-ChildItem $mmPlugin -Filter "*.dll"
+          if ($dlls.Count -eq 0) {
+            Write-Host "[ERROR] multimedia plugin folder empty: $mmPlugin" -ForegroundColor Red
+            exit 1
+          }
+          Write-Host "[OK] multimedia plugins ($($dlls.Count)):" -ForegroundColor Green
+          $dlls | Select-Object Name | Format-Table
           "plugin_dir=$mmPlugin" >> $env:GITHUB_OUTPUT
 
       - name: Determine version
@@ -170,7 +173,6 @@ jobs:
           $distMB = [math]::Round((Get-ChildItem "dist\main.dist" -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB, 1)
           Write-Host "[OK] exe: $mb MB | main.dist: $distMB MB" -ForegroundColor Green
 
-          # --- multimedia plugin ---
           $mmPath = "dist\main.dist\PyQt6\Qt6\plugins\multimedia"
           if (-not (Test-Path $mmPath)) {
             Write-Host "[ERROR] multimedia plugin missing in dist: $mmPath" -ForegroundColor Red
@@ -184,20 +186,8 @@ jobs:
           Write-Host "[OK] multimedia plugins in dist ($($mmDlls.Count)):" -ForegroundColor Green
           $mmDlls | Select-Object Name | Format-Table
 
-          # --- Qt6 DLLs ---
           Write-Host "`n== Qt6 DLLs ==" -ForegroundColor Cyan
           Get-ChildItem "dist\main.dist" -Filter "Qt6*.dll" | Select-Object Name | Format-Table
-
-          # --- WebEngine resources ---
-          Write-Host "`n== WebEngine resources ==" -ForegroundColor Cyan
-          $weFound = $false
-          Get-ChildItem "dist\main.dist" -Recurse -Filter "qtwebengine_resources.pak" -ErrorAction SilentlyContinue | ForEach-Object {
-            Write-Host "[OK] $($_.FullName)" -ForegroundColor Green
-            $weFound = $true
-          }
-          if (-not $weFound) {
-            Write-Host "[WARN] qtwebengine_resources.pak not found — PRIVATE setup wizard may fail" -ForegroundColor Yellow
-          }
 
       - name: Prepare distribution
         shell: pwsh
@@ -222,8 +212,7 @@ jobs:
           )
           Set-Content -Path (Join-Path $bin "README.txt") -Value $binLines -Encoding UTF8
 
-          # ---- Удаляем ТОЛЬКО персональные файлы ----
-          # whitelist.db НЕ удаляем — наоборот, заменим на seed ниже
+          # ---- Удаляем только персональные файлы ----
           $personal = @(
             "sources.txt","sources.txt.bak",
             "direct_sources.txt","direct_sources.txt.bak",
@@ -236,24 +225,25 @@ jobs:
             if (Test-Path $p) { Remove-Item $p -Force }
           }
 
-          # ---- Формируем рабочий whitelist.db из whitelist_seed.db ----
+          # ---- whitelist.db <- whitelist_seed.db ----
           $seedDb = Join-Path $data "whitelist_seed.db"
           $workDb = Join-Path $data "whitelist.db"
           if (-not (Test-Path $seedDb)) {
-            Write-Host "[ERROR] whitelist_seed.db отсутствует в dist\data\" -ForegroundColor Red
+            Write-Host "[ERROR] whitelist_seed.db missing in dist\data\" -ForegroundColor Red
             exit 1
           }
-          # Убираем возможные WAL/SHM от предыдущих прогонов
           foreach ($sfx in @("", "-wal", "-shm")) {
             $p = "$workDb$sfx"
             if (Test-Path $p) { Remove-Item $p -Force }
           }
           Copy-Item $seedDb $workDb
-          $seedCount = & python -c "import sqlite3; print(sqlite3.connect(r'$seedDb').execute('SELECT COUNT(*) FROM movie_whitelist').fetchone()[0])"
-          Write-Host "[OK] whitelist.db <- whitelist_seed.db ($seedCount фильмов)" -ForegroundColor Green
 
-          # Проставить available=1 для NULL, как делает apply_seed.py
-          & python -c "import sqlite3; c=sqlite3.connect(r'$workDb'); c.execute('UPDATE movie_whitelist SET available=1 WHERE available IS NULL'); c.commit(); c.close()"
+          $seedCount = (& python -c 'import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute("SELECT COUNT(*) FROM movie_whitelist").fetchone()[0])' $workDb).Trim()
+          if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] query whitelist.db failed" -ForegroundColor Red; exit 1 }
+          Write-Host "[OK] whitelist.db <- whitelist_seed.db ($seedCount films)" -ForegroundColor Green
+
+          & python -c 'import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute("UPDATE movie_whitelist SET available=1 WHERE available IS NULL"); c.commit(); c.close()' $workDb
+          if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] update available failed" -ForegroundColor Red; exit 1 }
 
           # ---- config.example.txt ----
           $cfgLines = @(
@@ -271,7 +261,7 @@ jobs:
             "",
             "1. Run amagi-player.exe",
             "2. Accept the terms on first launch",
-            "3. data\ and bin\ folders are used as-is from this ZIP",
+            "3. data\ and bin\ are used as-is from this ZIP",
             "4. Sources: data\sources.txt (template: data\sources.example.txt)",
             "5. API keys: .env next to exe (template: config.example.txt)",
             "",
