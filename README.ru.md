@@ -10,6 +10,31 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)]()
 
+[![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)]()
+
+</div>
+
+## Screenshots
+
+### Dark theme
+
+<div align="center">
+
+| | |
+|---|---|
+| ![Dark 1](docs/screenshots/dark-01.png) | ![Dark 2](docs/screenshots/dark-02.png) |
+| ![Dark 3](docs/screenshots/dark-03.png) | ![Dark 4](docs/screenshots/dark-04.png) |
+
+</div>
+
+### Light theme
+
+<div align="center">
+
+| | |
+|---|---|
+| ![Light 1](docs/screenshots/light-01.png) | ![Light 2](docs/screenshots/light-02.png) |
+
 </div>
 
 ---

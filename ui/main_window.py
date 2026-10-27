@@ -1,12 +1,32 @@
-"""Главное окно Amagi-Player."""
+"""Главное окно Amagi-Player.
+
+v2.0.5 (light theme polish):
+  - исправлен QEasingCurve.Type.OutCubic / InOutQuad;
+  - hover в светлой теме — плавная объёмная тень (QGraphicsDropShadowEffect),
+    никакого opacity → карточки НЕ становятся серыми;
+  - анимация 280 ms с OutCubic (вход) / InOutQuad (выход) — заметно плавнее;
+  - при выходе из светлой темы эффекты полностью удаляются;
+  - event-filter ставится на новые карточки по таймеру (300 ms).
+"""
 
 import os
 import random
 
-from PyQt6.QtCore import QEvent, QPoint, QPropertyAnimation, QRect, Qt, pyqtSignal
+from PyQt6.QtCore import (
+    QEvent,
+    QEasingCurve,
+    QParallelAnimationGroup,
+    QPoint,
+    QPointF,
+    QPropertyAnimation,
+    Qt,
+    QTimer,
+    pyqtSignal,
+)
 from PyQt6.QtGui import QColor, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QFrame,
+    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -28,7 +48,7 @@ class MainWindow(QMainWindow):
     settings_opened = pyqtSignal()
     resume_movie_requested = pyqtSignal(int)
     resume_dismiss_requested = pyqtSignal(int)
-    language_changed = pyqtSignal(str)  # "en" | "ru"
+    language_changed = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
@@ -36,14 +56,18 @@ class MainWindow(QMainWindow):
         self._current_resume_id = None
         self._current_lang = getattr(config, "SEARCH_LANGUAGE", "en")
 
-        # Состояние темы
         self._is_light_theme = False
-        self._noise_pixmap = None  # Кэш
-        self._active_animations = {}  # Кэш
+        self._noise_pixmap = None
+        self._active_animations = {}
 
         self._init_ui_core()
         self._load_stylesheet()
         self.resize(1150, 820)
+
+        self._card_filter_timer = QTimer(self)
+        self._card_filter_timer.setInterval(300)
+        self._card_filter_timer.timeout.connect(self._sync_card_filters)
+        self._card_filter_timer.start()
 
     def _init_ui_core(self):
         central_widget = QWidget(self)
@@ -53,9 +77,7 @@ class MainWindow(QMainWindow):
         base_layout.setContentsMargins(0, 0, 0, 0)
         base_layout.setSpacing(0)
 
-        # ==================================================================
-        # 1. ВЕРХНЯЯ ШАПКА
-        # ==================================================================
+        # ================= HEADER =================
         self.header_bar = QWidget(central_widget)
         self.header_bar.setObjectName("headerBar")
         self.header_bar.setFixedHeight(75)
@@ -75,7 +97,6 @@ class MainWindow(QMainWindow):
 
         header_layout.addStretch()
 
-        # --- Кнопка переключения языка поиска ---
         self.language_btn = QPushButton(self._current_lang.upper(), self.header_bar)
         self.language_btn.setObjectName("languageButton")
         self.language_btn.setFixedSize(48, 32)
@@ -109,9 +130,7 @@ class MainWindow(QMainWindow):
 
         base_layout.addWidget(self.header_bar)
 
-        # ==================================================================
-        # 2. РАБОЧАЯ ЗОНА
-        # ==================================================================
+        # ================= CONTENT =================
         content_wrapper = QWidget(central_widget)
         content_layout = QVBoxLayout(content_wrapper)
         content_layout.setContentsMargins(40, 35, 40, 25)
@@ -122,7 +141,7 @@ class MainWindow(QMainWindow):
         self.details_page = MovieDetailsWidget(content_wrapper)
         self.player_page = MoviePlayerWidget(content_wrapper)
 
-        # Заглушка настроек
+        # settings placeholder
         self.settings_page_placeholder = QWidget()
         settings_layout = QVBoxLayout(self.settings_page_placeholder)
         settings_layout.setContentsMargins(0, 0, 0, 0)
@@ -139,18 +158,18 @@ class MainWindow(QMainWindow):
         settings_layout.addWidget(settings_label)
         settings_layout.addStretch()
 
-        self.screen_stack.addWidget(self.feed_page)                 # 0
-        self.screen_stack.addWidget(self.details_page)              # 1
-        self.screen_stack.addWidget(self.player_page)               # 2
-        self.screen_stack.addWidget(self.settings_page_placeholder) # 3
+        self.screen_stack.addWidget(self.feed_page)
+        self.screen_stack.addWidget(self.details_page)
+        self.screen_stack.addWidget(self.player_page)
+        self.screen_stack.addWidget(self.settings_page_placeholder)
         content_layout.addWidget(self.screen_stack)
-        # Нижняя панель
+
+        # bottom bar
         bottom_bar = QWidget(content_wrapper)
         bottom_layout = QHBoxLayout(bottom_bar)
         bottom_layout.setContentsMargins(0, 0, 0, 0)
         bottom_layout.addStretch()
 
-        # Кнопка смены темы
         self.theme_btn = QPushButton("✦ СВЕТЛАЯ ТЕМА", bottom_bar)
         self.theme_btn.setObjectName("sysButton")
         self.theme_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -165,9 +184,7 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(bottom_bar)
         base_layout.addWidget(content_wrapper)
 
-        # ==================================================================
-        # 3. ПАРЯЩИЙ ОСТРОВ ИСТОРИИ
-        # ==================================================================
+        # ================= RESUME ISLAND =================
         self.resume_island = QFrame(central_widget)
         self.resume_island.setObjectName("continueIsland")
         self.resume_island.setFixedSize(420, 96)
@@ -183,7 +200,6 @@ class MainWindow(QMainWindow):
 
         self.resume_action_btn = QPushButton("Продолжить просмотр", self.resume_island)
         self.resume_action_btn.setObjectName("islandActionButton")
-
         self.resume_action_btn.clicked.connect(self._on_resume_action_triggered)
         island_layout.addWidget(self.resume_action_btn)
 
@@ -195,9 +211,7 @@ class MainWindow(QMainWindow):
 
         self.resume_island.hide()
 
-    # ==================================================================
-    #  ЯЗЫК ПОИСКА
-    # ==================================================================
+    # ================= LANGUAGE =================
     def _on_language_btn_clicked(self):
         new_lang = "ru" if self._current_lang == "en" else "en"
         self._current_lang = new_lang
@@ -211,9 +225,7 @@ class MainWindow(QMainWindow):
     def get_language(self) -> str:
         return self._current_lang
 
-    # ==================================================================
-    #  RESIZE / PAINT
-    # ==================================================================
+    # ================= RESIZE / PAINT =================
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, "resume_island") and self.resume_island.isVisible():
@@ -233,7 +245,7 @@ class MainWindow(QMainWindow):
                 noise_painter = QPainter(self._noise_pixmap)
                 for x in range(header_rect.width()):
                     for y in range(header_rect.height()):
-                        if random.random() < 0.15:  # Усиленный хай-тек шум
+                        if random.random() < 0.15:
                             alpha = random.randint(5, 12)
                             noise_painter.setPen(QColor(255, 255, 255, alpha))
                             noise_painter.drawPoint(x, y)
@@ -272,47 +284,85 @@ class MainWindow(QMainWindow):
         self.resume_island.show()
         self._reposition_resume_island()
 
-    # ==================================================================
-    #  ДИНАМИЧЕСКИЙ ОБРАБОТЧИК ТЕМЫ И ФИЗИЧЕСКИХ АНИМАЦИЙ SCALE
-    # ==================================================================
+    # ================= HOVER (light theme) =================
+    def _sync_card_filters(self):
+        """Ставит event-filter на все MovieCardWidget.
+
+        В light-теме заранее создаёт DropShadow-эффект (blur=0), чтобы
+        hover-анимация стартовала мгновенно без «первого рывка».
+        """
+        for widget in self.findChildren(QWidget):
+            if widget.__class__.__name__ == "MovieCardWidget":
+                if not getattr(widget, "_hover_filter_installed", False):
+                    widget.installEventFilter(self)
+                    widget._hover_filter_installed = True
+                    if self._is_light_theme:
+                        self._ensure_card_shadow(widget)
+
+    def _ensure_card_shadow(self, card_widget) -> QGraphicsDropShadowEffect:
+        effect = card_widget.graphicsEffect()
+        if not isinstance(effect, QGraphicsDropShadowEffect):
+            effect = QGraphicsDropShadowEffect(card_widget)
+            effect.setBlurRadius(0)
+            effect.setOffset(0, 0)
+            effect.setColor(QColor(0, 0, 0, 0))
+            card_widget.setGraphicsEffect(effect)
+        return effect
+
     def eventFilter(self, obj, event):
-        """Плавная физическая анимация масштабирования (Scale) при наведении."""
-        if self._is_light_theme and obj.inherits("QWidget") and obj.objectName() == "":
-            if obj.__class__.__name__ == "MovieCardWidget":
-                if event.type() == QEvent.Type.Enter:
-                    self._animate_card_scale(obj, expand=True)
-                elif event.type() == QEvent.Type.Leave:
-                    self._animate_card_scale(obj, expand=False)
+        if self._is_light_theme and obj.__class__.__name__ == "MovieCardWidget":
+            if event.type() == QEvent.Type.Enter:
+                self._animate_card_scale(obj, expand=True)
+            elif event.type() == QEvent.Type.Leave:
+                self._animate_card_scale(obj, expand=False)
         return super().eventFilter(obj, event)
 
     def _animate_card_scale(self, card_widget, expand: bool):
-        """Плавно изменяет геометрию карточки, создавая яблочный эффект левитации."""
-        # Сохраняем исходную геометрию, если она ещё не была зафиксирована
-        if not hasattr(card_widget, "_original_geometry"):
-            card_widget._original_geometry = card_widget.geometry()
+        """Плавное «приподнимание» карточки через объёмную тень.
 
-        if card_widget in self._active_animations:
-            self._active_animations[card_widget].stop()
+        Никакого opacity → карточки всегда яркие.
+        На входе тень становится глубже и слегка смещается вниз,
+        создавая эффект парения. На выходе — плавно исчезает.
+        """
+        effect = self._ensure_card_shadow(card_widget)
 
-        orig = card_widget._original_geometry
-        # Рассчитываем целевую увеличенную рамку (+8 пикселей во все стороны)
-        target_rect = QRect(orig.x() - 4, orig.y() - 4, orig.width() + 8, orig.height() + 8)
+        # Легкий цветной оттенок тени для уникальности (только в light)
+        shadow_color = QColor(0, 0, 0, 120)
+        effect.setColor(shadow_color)
 
-        anim = QPropertyAnimation(card_widget, b"geometry", self)
-        anim.setDuration(150)  # Быстрый премиальный отклик интерфейса
+        prev = self._active_animations.pop(card_widget, None)
+        if prev is not None:
+            prev.stop()
 
-        if expand:
-            anim.setStartValue(card_widget.geometry())
-            anim.setEndValue(target_rect)
-        else:
-            anim.setStartValue(card_widget.geometry())
-            anim.setEndValue(orig)
+        ease = (
+            QEasingCurve.Type.OutCubic
+            if expand
+            else QEasingCurve.Type.InOutQuad
+        )
 
-        self._active_animations[card_widget] = anim
-        anim.start()
+        group = QParallelAnimationGroup(self)
 
+        anim_blur = QPropertyAnimation(effect, b"blurRadius", self)
+        anim_blur.setDuration(280)
+        anim_blur.setEasingCurve(ease)
+        anim_blur.setStartValue(float(effect.blurRadius()))
+        anim_blur.setEndValue(24.0 if expand else 0.0)
+        group.addAnimation(anim_blur)
+
+        anim_offset = QPropertyAnimation(effect, b"offset", self)
+        anim_offset.setDuration(280)
+        anim_offset.setEasingCurve(ease)
+        anim_offset.setStartValue(effect.offset())
+        anim_offset.setEndValue(
+            QPointF(0.0, 6.0) if expand else QPointF(0.0, 0.0)
+        )
+        group.addAnimation(anim_offset)
+
+        self._active_animations[card_widget] = group
+        group.start()
+
+    # ================= THEME =================
     def _toggle_theme_internal(self):
-        """Переключает тему UI между OLED-dark и хай-тек Space Gray."""
         self._is_light_theme = not self._is_light_theme
         self._noise_pixmap = None
 
@@ -330,21 +380,26 @@ class MainWindow(QMainWindow):
             widget.style().unpolish(widget)
             widget.style().polish(widget)
 
-            # Подключаем нативный событийный фильтр для анимации карточек
+            if (widget.objectName() == "coverPlaceholder"
+                    and widget.__class__.__name__ != "MovieCardWidget"):
+                if self._is_light_theme:
+                    widget.setStyleSheet(
+                        "background-color: rgba(0, 0, 0, 0.4); border-radius: 24px;"
+                    )
+                else:
+                    widget.setStyleSheet(
+                        "background-color: rgba(0, 0, 0, 0.2); border-radius: 18px;"
+                    )
+
             if widget.__class__.__name__ == "MovieCardWidget":
                 if self._is_light_theme:
-                    widget.installEventFilter(self)
+                    self._ensure_card_shadow(widget)
                 else:
-                    widget.removeEventFilter(self)
-                    # Если возвращаемся в темную тему, сбрасываем размеры в дефолт
-                    if hasattr(widget, "_original_geometry"):
-                        widget.setGeometry(widget._original_geometry)
-
-            if widget.objectName() == "coverPlaceholder" and not widget.__class__.__name__ == "MovieCardWidget":
-                if self._is_light_theme:
-                    widget.setStyleSheet("background-color: rgba(0, 0, 0, 0.4); border-radius: 24px;")
-                else:
-                    widget.setStyleSheet("background-color: rgba(0, 0, 0, 0.2); border-radius: 18px;")
+                    prev = self._active_animations.pop(widget, None)
+                    if prev is not None:
+                        prev.stop()
+                    widget.setGraphicsEffect(None)
+                    widget._hover_filter_installed = False
 
         self.update()
         self.theme_toggle_requested.emit()

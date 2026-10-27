@@ -1,6 +1,17 @@
-"""Контроллер карточки фильма + lazy resolve kp_id."""
+"""Контроллер карточки фильма + lazy resolve kp_id.
 
+v2.0.4:
+  - KP API используется ТОЛЬКО в private (LEGAL_ONLY_MODE=False);
+  - resume island ("Продолжить просмотр") скрывается при открытии
+    карточки и возвращается при возврате в ленту;
+  - _MAX_DESCRIPTION_LEN = 500 (виджет ещё раз обрежет до 450
+    для отображения с троеточием);
+  - обложка и описание грузятся параллельно, обновляются точечно.
+"""
+
+import html as html_lib
 import os
+import re
 
 import aiohttp
 
@@ -13,6 +24,46 @@ log = get_logger("details")
 
 _MIN_POSTER_BYTES = 500
 _IA_MIN_BYTES = 500
+_MAX_DESCRIPTION_LEN = 500
+
+_WHITELIST_DESC_FIELDS = (
+    "description_ru",
+    "overview_ru",
+    "plot_ru",
+    "description",
+)
+
+
+def _is_cyrillic_dominant(text: str) -> bool:
+    if not text:
+        return False
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return False
+    cyrillic = sum(1 for c in letters if "\u0400" <= c <= "\u04FF")
+    return (cyrillic / len(letters)) > 0.30
+
+
+def _clean_ia_description(raw) -> str:
+    if not raw:
+        return ""
+    if isinstance(raw, list):
+        raw = " ".join(str(x) for x in raw if x)
+    text = str(raw)
+
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"</p\s*>", "\n\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = html_lib.unescape(text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+
+    if len(text) > _MAX_DESCRIPTION_LEN:
+        cut = text[: _MAX_DESCRIPTION_LEN - 3].rstrip()
+        if " " in cut:
+            cut = cut.rsplit(" ", 1)[0]
+        text = cut + "..."
+    return text
 
 
 class DetailsController:
@@ -27,36 +78,47 @@ class DetailsController:
         self.current_movie_title = ""
         self.current_movie_metadata = None
         self._current_cover_task = None
+        self._current_desc_task = None
 
+    # ------------------------------------------------------------------
+    #  Режимы
+    # ------------------------------------------------------------------
+    def _is_public(self) -> bool:
+        return bool(getattr(config, "LEGAL_ONLY_MODE", True))
+
+    def _kp_enabled(self) -> bool:
+        """KP используется ТОЛЬКО в private."""
+        return not self._is_public()
+
+    # ------------------------------------------------------------------
+    #  Открытие карточки
+    # ------------------------------------------------------------------
     def open(self, kp_id: int):
         self.loop.create_task(self._open_details_page(kp_id))
 
     async def _open_details_page(self, kp_id: int):
-        # === 1. Каскад постера: cache → seed → (в фоне) IA / KP ===
+        # Скрываем "Продолжить просмотр", чтобы не перекрывал кнопку
+        if hasattr(self.main_window, "resume_island"):
+            self.main_window.resume_island.hide()
+
         cache_path = os.path.join(str(config.CACHE_DIR), f"{kp_id}.jpg")
         cover_path = ""
         if (os.path.exists(cache_path)
                 and os.path.getsize(cache_path) > _MIN_POSTER_BYTES):
             cover_path = cache_path
 
-        # === 2. Основные метаданные ===
+        # Метаданные
         if kp_id < 0:
-            row = WhitelistRepository.get_movie(kp_id)
-            metadata = {
-                "kp_id": kp_id,
-                "title": row["title_ru"] if row else "Неизвестно",
-                "title_en": row["title_en"] if row else "",
-                "year": row["year"] if row else "----",
-                "description": "Фильм общественного достояния.",
-                "cover_path": cover_path,
-            }
-        else:
+            metadata = self._metadata_from_whitelist(kp_id, cover_path)
+        elif self._kp_enabled():
             metadata = await self.kp_service.get_movie_data(
                 self.session, kp_id
             )
             metadata["kp_id"] = kp_id
             if not metadata.get("cover_path") and cover_path:
                 metadata["cover_path"] = cover_path
+        else:
+            metadata = self._metadata_from_whitelist(kp_id, cover_path)
 
         self.current_movie_id = kp_id
         self.current_movie_metadata = metadata
@@ -65,7 +127,15 @@ class DetailsController:
         self.main_window.details_page.update_movie_details(metadata)
         self.main_window.screen_stack.setCurrentIndex(1)
 
-        # === 3. Фоновая загрузка постера, если нет ===
+        # Будет ли lazy_resolve? Если да — IA-описание не нужно,
+        # KP всё равно перезапишет после resolve.
+        will_lazy_resolve = (
+            self._kp_enabled()
+            and kp_id < 0
+            and getattr(config, "LAZY_RESOLVE", True)
+        )
+
+        # Фоновые задачи
         if not cover_path:
             self._current_cover_task = self.loop.create_task(
                 self._load_cover_for_details(
@@ -75,21 +145,105 @@ class DetailsController:
                     year=str(metadata.get("year", "")),
                 )
             )
+        if (not (metadata.get("description") or "").strip()
+                and not will_lazy_resolve):
+            self._current_desc_task = self.loop.create_task(
+                self._load_description_for_details(
+                    kp_id,
+                    title_en=metadata.get("title_en", ""),
+                    title_ru=metadata.get("title", ""),
+                    year=str(metadata.get("year", "")),
+                )
+            )
 
-        # === 4. Lazy resolve для временных kp_id ===
-        if kp_id < 0 and getattr(config, "LAZY_RESOLVE", True):
+        if will_lazy_resolve:
             self.loop.create_task(self._lazy_resolve(kp_id))
 
-    # ==================================================================
-    #  ЗАГРУЗКА ОБЛОЖКИ ДЛЯ ДЕТАЛЕЙ
-    # ==================================================================
+    def _metadata_from_whitelist(self, kp_id: int, cover_path: str) -> dict:
+        row = WhitelistRepository.get_movie(kp_id)
+        return {
+            "kp_id": kp_id,
+            "title": (row["title_ru"] if row else "") or "Без названия",
+            "title_en": (row["title_en"] if row else "") or "",
+            "year": (row["year"] if row else "----"),
+            "description": self._whitelist_description(kp_id, row),
+            "cover_path": cover_path,
+        }
+
+    def _whitelist_description(self, kp_id: int, row) -> str:
+        if not row:
+            return ""
+        try:
+            row_dict = dict(row)
+        except Exception:
+            return ""
+        for field in _WHITELIST_DESC_FIELDS:
+            val = row_dict.get(field)
+            if val and _is_cyrillic_dominant(str(val)):
+                return str(val).strip()
+        return ""
+
+    # ------------------------------------------------------------------
+    #  Описание (IA)
+    # ------------------------------------------------------------------
+    async def _load_description_for_details(
+        self, kp_id: int, title_en: str, title_ru: str, year: str
+    ):
+        archive_id = WhitelistRepository.get_archive_identifier(kp_id)
+        if not archive_id and (title_en or title_ru):
+            archive_id = await self._search_archive_identifier(
+                title_en or title_ru, year
+            )
+        if not archive_id:
+            log.debug("description: нет identifier для kp_id=%d", kp_id)
+            self._apply_description_to_ui(kp_id, "")
+            return
+
+        description = await self._fetch_ia_description(archive_id)
+        self._apply_description_to_ui(kp_id, description or "")
+
+    async def _fetch_ia_description(self, archive_id: str) -> str:
+        url = f"https://archive.org/metadata/{archive_id}"
+        try:
+            timeout = aiohttp.ClientTimeout(total=12)
+            async with self.session.get(url, timeout=timeout) as resp:
+                if resp.status != 200:
+                    return ""
+                data = await resp.json()
+        except Exception as e:
+            log.debug("IA metadata %s: %s", archive_id, e)
+            return ""
+
+        meta = data.get("metadata") or {}
+        raw = meta.get("description")
+        text = _clean_ia_description(raw)
+        if text:
+            lang = "RU" if _is_cyrillic_dominant(text) else "EN/other"
+            log.info(
+                "Описание (IA): %s (%d симв., %s)",
+                archive_id, len(text), lang,
+            )
+        return text
+
+    def _apply_description_to_ui(self, kp_id: int, text: str):
+        if self.current_movie_id != kp_id:
+            return
+        try:
+            if self.current_movie_metadata is not None:
+                self.current_movie_metadata["description"] = text
+            self.main_window.details_page.update_description(text)
+        except Exception as e:
+            log.debug("apply_description_to_ui: %s", e)
+
+    # ------------------------------------------------------------------
+    #  Обложка
+    # ------------------------------------------------------------------
     async def _load_cover_for_details(
         self, kp_id: int, title_en: str, title_ru: str, year: str
     ):
-        """Каскад: seed → IA → KP. Обновляет UI когда постер получен."""
         cache_path = os.path.join(str(config.CACHE_DIR), f"{kp_id}.jpg")
 
-        # 1. seed_posters
+        # 1. seed
         seed_dir = os.path.join(str(config.DATA_DIR), "seed_posters")
         p = os.path.join(seed_dir, f"{kp_id}.jpg")
         if os.path.exists(p) and os.path.getsize(p) > _MIN_POSTER_BYTES:
@@ -101,7 +255,7 @@ class DetailsController:
             self._apply_cover_to_ui(kp_id, p)
             return
 
-        # 2. archive.org thumbnail
+        # 2. IA по identifier
         archive_id = WhitelistRepository.get_archive_identifier(kp_id)
         if archive_id:
             ok = await self._try_ia_thumbnail(archive_id, cache_path)
@@ -109,8 +263,19 @@ class DetailsController:
                 self._apply_cover_to_ui(kp_id, cache_path)
                 return
 
-        # 3. KP (только если kp_id > 0 или есть title_en)
-        if kp_id > 0 or title_en:
+        # 3. IA search по title/year
+        if not archive_id and (title_en or title_ru):
+            found_id = await self._search_archive_identifier(
+                title_en or title_ru, year
+            )
+            if found_id:
+                ok = await self._try_ia_thumbnail(found_id, cache_path)
+                if ok:
+                    self._apply_cover_to_ui(kp_id, cache_path)
+                    return
+
+        # 4. KP — только в private
+        if self._kp_enabled() and (kp_id > 0 or title_en):
             ok = await self._try_kp_cover(
                 kp_id, title_en or title_ru, year, cache_path
             )
@@ -118,23 +283,72 @@ class DetailsController:
                 self._apply_cover_to_ui(kp_id, cache_path)
                 return
 
-        log.info("Обложка для kp_id=%d не найдена ни в одном источнике",
-                 kp_id)
+        log.info("Постер kp_id=%d не найден", kp_id)
+        self._notify_cover_failed(kp_id)
 
-    def _apply_cover_to_ui(self, kp_id: int, cover_path: str):
-        """Обновляет UI только если пользователь всё ещё смотрит этот фильм."""
+    async def _search_archive_identifier(
+        self, title: str, year: str
+    ) -> str | None:
+        query = (title or "").strip()
+        if not query:
+            return None
+        safe = query.replace('"', '\\"')
+        if year and str(year).isdigit():
+            q = (
+                f'title:("{safe}") AND '
+                f'year:[{int(year) - 1} TO {int(year) + 1}] AND '
+                f'mediatype:(movies)'
+            )
+        else:
+            q = f'title:("{safe}") AND mediatype:(movies)'
+
+        url = "https://archive.org/advancedsearch.php"
+        params = [
+            ("q", q),
+            ("fl[]", "identifier"),
+            ("rows", "5"),
+            ("output", "json"),
+            ("sort[]", "downloads desc"),
+        ]
+        try:
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with self.session.get(
+                url, params=params, timeout=timeout
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json()
+        except Exception as e:
+            log.debug("IA search fallback: %s", e)
+            return None
+
+        docs = data.get("response", {}).get("docs", [])
+        if not docs:
+            return None
+        identifier = docs[0].get("identifier") or None
+        if identifier:
+            log.info("IA search: '%s' → %s", query, identifier)
+        return identifier
+
+    def _apply_cover_to_ui(self, kp_id: int, cover_path: str | None):
         if self.current_movie_id != kp_id:
             return
-        if not os.path.exists(cover_path):
+        if cover_path and not os.path.exists(cover_path):
             return
         try:
-            if self.current_movie_metadata is not None:
+            if cover_path and self.current_movie_metadata is not None:
                 self.current_movie_metadata["cover_path"] = cover_path
-            self.main_window.details_page.update_movie_details(
-                self.current_movie_metadata or {}
-            )
+            self.main_window.details_page.update_cover(cover_path)
         except Exception as e:
             log.debug("apply_cover_to_ui: %s", e)
+
+    def _notify_cover_failed(self, kp_id: int):
+        if self.current_movie_id != kp_id:
+            return
+        try:
+            self.main_window.details_page.update_cover(None)
+        except Exception as e:
+            log.debug("notify_cover_failed: %s", e)
 
     async def _try_ia_thumbnail(self, archive_id: str, cache_path: str) -> bool:
         url = f"https://archive.org/services/img/{archive_id}"
@@ -151,8 +365,7 @@ class DetailsController:
                 with open(cache_path, "wb") as f:
                     f.write(content)
             await self.loop.run_in_executor(None, write)
-            log.info("Постер в деталях (IA): %s (%d B)",
-                     archive_id, len(content))
+            log.info("Постер (IA): %s (%d B)", archive_id, len(content))
             return True
         except Exception as e:
             log.debug("IA thumb %s: %s", archive_id, e)
@@ -169,7 +382,6 @@ class DetailsController:
                 )
                 poster_url = (metadata.get("poster_url") or "").strip()
                 if not poster_url and metadata.get("cover_path"):
-                    # KP уже скачал — копируем
                     try:
                         import shutil
                         shutil.copy2(metadata["cover_path"], cache_path)
@@ -211,8 +423,10 @@ class DetailsController:
                 with open(cache_path, "wb") as f:
                     f.write(content)
             await self.loop.run_in_executor(None, write)
-            log.info("Постер в деталях (KP): kp_id=%d (%d KB)",
-                     kp_id, len(content) // 1024)
+            log.info(
+                "Постер (KP): kp_id=%d (%d KB)",
+                kp_id, len(content) // 1024,
+            )
             return True
         except Exception as e:
             log.debug("KP download: %s", e)
@@ -239,9 +453,9 @@ class DetailsController:
             return []
         return data.get("films") or []
 
-    # ==================================================================
-    #  LAZY RESOLVE (kp_id < 0 → реальный)
-    # ==================================================================
+    # ------------------------------------------------------------------
+    #  Lazy resolve — только private
+    # ------------------------------------------------------------------
     async def _lazy_resolve(self, old_kp_id: int):
         row = WhitelistRepository.get_movie(old_kp_id)
         if not row:
@@ -298,11 +512,13 @@ class DetailsController:
             except Exception as e:
                 log.warning("Lazy resolve update: %s", e)
 
-    # ==================================================================
+    # ------------------------------------------------------------------
     #  Навигация
-    # ==================================================================
+    # ------------------------------------------------------------------
     def handle_back_to_feed(self):
         self.main_window.screen_stack.setCurrentIndex(0)
+        # Возвращаем "Продолжить просмотр", если есть незакрытая сессия
+        self.check_resume_island()
 
     def handle_resume_playback(self, movie_id: int):
         self.main_window.resume_island.hide()

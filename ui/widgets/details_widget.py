@@ -1,10 +1,21 @@
-"""Экран деталей. Гарантированная эмиссия start_streaming_requested."""
-
 import os
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+
+
+_MAX_DESC_DISPLAY_CHARS = 450
+
+
+def _truncate_for_display(text: str, max_chars: int = _MAX_DESC_DISPLAY_CHARS) -> str:
+    """Режет по границе слова и ставит троеточие."""
+    if len(text) <= max_chars:
+        return text
+    cut = text[:max_chars].rstrip()
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    return cut + "..."
 
 
 class MovieDetailsWidget(QWidget):
@@ -39,7 +50,10 @@ class MovieDetailsWidget(QWidget):
         self.big_cover.setObjectName("coverPlaceholder")
         self.big_cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.big_cover.setText("ЗАГРУЗКА...")
-        content_layout.addWidget(self.big_cover)
+        # ФИКС 1: AlignTop — постер прижат к верху, не центрируется
+        content_layout.addWidget(
+            self.big_cover, alignment=Qt.AlignmentFlag.AlignTop
+        )
 
         text_layout = QVBoxLayout()
         text_layout.setSpacing(15)
@@ -63,6 +77,8 @@ class MovieDetailsWidget(QWidget):
         )
         self.desc_label.setWordWrap(True)
         self.desc_label.setAlignment(Qt.AlignmentFlag.AlignTop)
+        # ФИКС 2: ограничение высоты — описание не вылезает за постер
+        self.desc_label.setMaximumHeight(220)
         text_layout.addWidget(self.desc_label)
 
         text_layout.addSpacing(20)
@@ -87,25 +103,73 @@ class MovieDetailsWidget(QWidget):
         if kp_id is not None:
             self._current_kp_id = kp_id
 
-        print(f"[DETAILS] update: kp_id={self._current_kp_id}, title='{metadata.get('title')}'")
+        print(
+            f"[DETAILS] update: kp_id={self._current_kp_id}, "
+            f"title='{metadata.get('title')}'"
+        )
 
         self.title_label.setText(str(metadata.get("title", "Без названия")).upper())
         self.year_label.setText(f"{metadata.get('year', '----')} ГОД")
-        self.desc_label.setText(str(metadata.get("description", "Описание отсутствует.")))
+
+        desc = (metadata.get("description") or "").strip()
+        if desc:
+            self.update_description(desc)
+        else:
+            self.desc_label.setText("Загрузка описания...")
 
         cover_path = metadata.get("cover_path", "") or ""
         if cover_path and os.path.exists(cover_path):
-            pixmap = QPixmap(cover_path)
-            if not pixmap.isNull():
-                self.big_cover.setText("")
-                self.big_cover.setPixmap(pixmap)
-                print(f"[DETAILS] Постер {pixmap.width()}x{pixmap.height()}")
-            else:
-                self.big_cover.clear()
-                self.big_cover.setText("ОБЛОЖКА\nНЕДОСТУПНА")
+            self.update_cover(cover_path)
         else:
             self.big_cover.clear()
+            self.big_cover.setText("ЗАГРУЗКА ОБЛОЖКИ...")
+
+    def update_cover(self, cover_path: str | None):
+        if not cover_path or not os.path.exists(cover_path):
+            self.big_cover.clear()
             self.big_cover.setText("ОБЛОЖКА\nНЕДОСТУПНА")
+            return
+
+        pixmap = QPixmap(cover_path)
+        if pixmap.isNull():
+            self.big_cover.clear()
+            self.big_cover.setText("ОБЛОЖКА\nНЕДОСТУПНА")
+            return
+
+        self.big_cover.setText("")
+        self.big_cover.setPixmap(pixmap)
+        print(f"[DETAILS] Постер {pixmap.width()}x{pixmap.height()} ← {cover_path}")
+
+    def update_description(self, text: str | None):
+        clean = (text or "").strip()
+        if not clean:
+            title = self._last_metadata.get("title", "Этот фильм")
+            year = self._last_metadata.get("year", "")
+            fallback = str(title)
+            if year and str(year) != "----":
+                fallback += f" ({year})"
+            fallback += ". Источник — открытый архив Internet Archive."
+            self.desc_label.setText(fallback)
+            return
+
+        # Обрезка троеточием — описание не вылезает за постер
+        clean = _truncate_for_display(clean)
+
+        letters = [c for c in clean if c.isalpha()]
+        if letters:
+            cyrillic = sum(1 for c in letters if "\u0400" <= c <= "\u04FF")
+            is_russian = (cyrillic / len(letters)) > 0.30
+        else:
+            is_russian = True
+
+        if is_russian:
+            self.desc_label.setText(clean)
+        else:
+            self.desc_label.setText(
+                f"<i style='color: rgba(255,255,255,0.45); "
+                f"font-size: 12px; letter-spacing: 1px;'>(English)</i>"
+                f"<br>{clean}"
+            )
 
     def _on_play_clicked(self):
         kp_id = self._current_kp_id or self._last_metadata.get("kp_id")

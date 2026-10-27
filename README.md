@@ -4,165 +4,189 @@
 
 # Amagi-Player
 
-**A desktop player for discovering and streaming public-domain content from open archives.**
+**Десктоп-плеер для поиска и воспроизведения контента общественного достояния из открытых архивов.**
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)]()
 
 </div>
+## Screenshots
+
+### Dark theme
+
+<div align="center">
+
+| | |
+|---|---|
+| ![Dark 1](docs/screenshots/dark-01.png) | ![Dark 2](docs/screenshots/dark-02.png) |
+| ![Dark 3](docs/screenshots/dark-03.png) | ![Dark 4](docs/screenshots/dark-04.png) |
+
+</div>
+
+### Light theme
+
+<div align="center">
+
+| | |
+|---|---|
+| ![Light 1](docs/screenshots/light-01.png) | ![Light 2](docs/screenshots/light-02.png) |
+
+</div>
 
 ---
 
-## About
+## О проекте
 
-Amagi-Player is a desktop application for searching and playing
-audiovisual content that is in the **public domain** or distributed
-by rights holders under open terms (Creative Commons, Open Access,
-and similar regimes).
+Amagi-Player — десктоп-приложение для поиска и воспроизведения
+аудиовизуального контента, находящегося в **общественном достоянии**
+(public domain) либо распространяемого правообладателями на открытых
+условиях (Creative Commons, Open Access и аналогичные режимы).
 
-The application is configured out of the box to work with
-**Internet Archive** — the largest open archive, which publishes
-millions of items and provides its own API and HTTP file delivery.
-Amagi-Player uses the standard Internet Archive mechanisms
-(`advancedsearch`, `metadata`, `download`) and does not host or
-redistribute the works themselves.
+Приложение изначально настроено на работу с **Internet Archive** —
+крупнейшим открытым архивом, который публикует миллионы единиц
+контента и предоставляет собственный API и HTTP-доставку файлов.
+Amagi-Player использует штатные механизмы Internet Archive
+(`advancedsearch`, `metadata`, `download`) и не хранит
+и не распространяет сами произведения.
 
-The application runs **locally**, with no analytics or telemetry.
-Network requests are made only to the sources that the user
-explicitly chooses for search and playback.
-
----
-
-## Features
-
-### Search and playback (public — supported)
-
-- Search across Internet Archive — the largest open archive of
-  public-domain works
-- Direct HTTP playback from `archive.org/download/...`
-  via QMediaPlayer + FFmpeg
-- Built-in player: play/pause, seek, fullscreen
-- "Continue watching" feature backed by local history
-- Poster and metadata cache
-
-### Experimental features (private — testing, for developers)
-
-These features exist in the codebase for architecture testing;
-they are not documented and not supported:
-
-- BitTorrent streaming via **libtorrent** — playback of
-  magnet links and `.torrent` files from external sources
-  (not from Internet Archive)
-- Alternative-source picker for unstable streams
-- User-defined sources (`data/sources.txt`)
-- External indexers (local Jackett and similar)
-- Headless site parsing via `nodriver`
-
-### Performance and reliability
-
-- **Asynchronous architecture** on `asyncio` + `qasync` — the
-  UI stays responsive during search and buffering
-- **Blocking I/O** (cache reads, poster writes) is offloaded to
-  `run_in_executor` — the event loop is never blocked
-- **Child process control**: stuck processes are terminated
-  automatically via `psutil`
-- Isolated execution of external utilities with lifetime control
-
-### User interface
-
-- Dark minimalist theme built on **PyQt6**
-- Works "out of the box" on Windows
-- Distributed as a ZIP archive containing the executable
+Приложение работает **локально**, без аналитики и телеметрии.
+Сетевые запросы выполняются только к тем источникам, которые
+пользователь явно использует для поиска и воспроизведения.
 
 ---
 
-## How it works
+## Возможности
 
-The public mode (the only supported one for end users) consists of
-two independent stages.
+### Поиск и воспроизведение (public — поддерживается)
 
-### Stage 1 — feed search (local)
+- Поиск по Internet Archive — крупнейшему открытому архиву
+  общественного достояния
+- Прямое HTTP-воспроизведение с `archive.org/download/...`
+  через QMediaPlayer + FFmpeg
+- Встроенный плеер: пауза, перемотка, полный экран
+- Функция «Продолжить просмотр» с локальной историей
+- Кэш постеров и метаданных
+
+### Экспериментальные функции (private — тестовый, для разработчиков)
+
+Эти функции присутствуют в коде для тестирования архитектуры,
+не документируются и не поддерживаются:
+
+- Потоковое воспроизведение через **libtorrent** — работа
+  с magnet-ссылками и `.torrent`-файлами от внешних источников
+  (не от Internet Archive)
+- Выбор альтернативной раздачи при нестабильном стриме
+- Пользовательские источники (`data/sources.txt`)
+- Внешние индексаторы (локальный Jackett и аналогичные)
+- Headless-парсинг сайтов через `nodriver`
+
+### Производительность и надёжность
+
+- **Асинхронная архитектура** на `asyncio` + `qasync` — интерфейс
+  не блокируется во время поиска и буферизации
+- **Блокирующий I/O** (чтение файлов кэша, запись постеров)
+  вынесен в `run_in_executor` — не блокирует event loop
+- **Контроль дочерних процессов**: автоматическое завершение
+  «повисших» процессов через `psutil`
+- Изолированный запуск внешних утилит с контролем времени жизни
+
+### Интерфейс
+
+- Тёмная минималистичная тема на **PyQt6**
+- Работает «из коробки» на Windows
+- Распространение в виде ZIP-архива с exe-файлом
+
+---
+
+## Как это работает
+
+Публичный режим (единственный поддерживаемый) состоит из двух
+независимых этапов.
+
+### Этап 1 — поиск в ленте (локальный)
 
 ```text
-1. User types a query into the search bar (or leaves it empty)
-2. Query goes to the local database data/whitelist.db
+1. Пользователь вводит запрос в строке поиска (или оставляет пустым)
+2. Запрос идёт в локальную базу data/whitelist.db
    SQL: SELECT kp_id FROM movie_whitelist
         WHERE (title_ru LIKE '%query%' OR title_en LIKE '%query%')
           AND available = 1
         ORDER BY kp_id DESC LIMIT 20 OFFSET N
-   For an empty query — the last 20 records from the database
-3. For each card — poster cascade:
-   cache (data/cache/{kp_id}.jpg) → data/seed_posters/{kp_id}.jpg →
+   Для пустого запроса — последние 20 записей из базы
+3. Для каждой карточки — каскад постера:
+   кэш (data/cache/{kp_id}.jpg) → data/seed_posters/{kp_id}.jpg →
    archive.org/services/img/{identifier} → Kinopoisk API
-4. User sees a grid of cards; click → details card
-5. Details metadata: from WhitelistRepository (if kp_id < 0)
-   or from KPService.get_movie_data (if kp_id > 0)
+4. Пользователь видит сетку карточек; клик → карточка деталей
+5. Метаданные деталей: из WhitelistRepository (если kp_id < 0)
+   или из KPService.get_movie_data (если kp_id > 0)
 ```
 
-The local database is prepared in advance (via `make_seed.py` in
-the source tree) and ships inside the ZIP already populated. No
-network requests are needed for this stage — except to fetch
-posters that are not yet cached.
+Локальная база формируется заранее (утилитой `make_seed.py`
+в исходниках) и поставляется в ZIP уже заполненной. Никаких
+сетевых запросов на этом этапе не требуется — только для
+подгрузки постеров, если их нет в кэше.
 
-### Stage 2 — playback (network)
+### Этап 2 — воспроизведение (сетевой)
 
 ```text
-1. User clicks "Start streaming" on the details card
-2. StreamController reads title_ru, title_en, year, imdb_id
-   and calls aggregator.find_torrent_stream(legal_only=True)
+1. Пользователь нажимает «Запустить трансляцию» в карточке
+2. StreamController берёт title_ru, title_en, year, imdb_id
+   и вызывает aggregator.find_torrent_stream(legal_only=True)
 3. aggregator._safe_archive_org → ArchiveOrgSearcher.search(
-     query = title_en or title_ru,
+     query = title_en или title_ru,
      year
    )
 4. ArchiveOrgSearcher.search:
    a) advancedsearch: title:("...") AND year:[y-1 TO y+1]
       AND mediatype:(movies), sort downloads desc, rows=10
-   b) For each of the top 8 results — metadata/{identifier}
-   c) Inside the metadata: iterate files, pick the largest
-      one with a video extension (.mp4/.mkv/.webm/...)
-   d) Scoring to sort results:
-        language (×100) + title precision (×50) + downloads (×20)
-      Explicitly wrong language (lang_s=0.0) — excluded
+   b) Для каждого из топ-8 результатов — metadata/{identifier}
+   c) Внутри метаданных: перебор файлов, выбор самого большого
+      с видео-расширением (.mp4/.mkv/.webm/...)
+   d) Скоринг для сортировки результатов:
+        язык (×100) + точность title (×50) + downloads (×20)
+      Явно чужой язык (lang_s=0.0) — отсев, не попадает в список
 5. stream_controller._execute_cascade:
-   direct_url sorted by size, the largest is chosen
+   direct_url сортируются по размеру, берётся самый большой
 6. playback.play_url(url) → QMediaPlayer.setSource(
      QUrl("https://archive.org/download/{id}/{file}")
    )
-7. QMediaPlayer + FFmpeg open the HTTP stream directly from archive.org
-   (HTTP Range for seeking)
+7. QMediaPlayer + FFmpeg открывают HTTP-поток напрямую с archive.org
+   (HTTP Range для seek)
 ```
 
-Additional details:
+Дополнительно:
 
-- **Feed on the home screen** is built from the local database
-  `data/whitelist.db`. The database ships in the ZIP already
-  populated; in the source tree it can be rebuilt from
-  `data/whitelist_seed.db` via `tools/apply_seed.py`.
-- **Poster and metadata cache** is stored in `data/cache/`. On every
-  request the TTL is checked: stale files are overwritten with new
-  ones. `tools/cache_stats.py clear-stale` removes stale files.
-- **Watch history** is stored in `data/app_data.db` and backs the
-  "Continue watching" feature.
+- **Лента на главном экране** формируется из локальной базы
+  `data/whitelist.db` — списка фильмов общественного достояния
+  с постером и метаданными. База поставляется в ZIP уже
+  заполненной; в исходниках её можно пересоздать из
+  `data/whitelist_seed.db` через `tools/apply_seed.py`.
+- **Кэш постеров и метаданных** хранится в `data/cache/`. При
+  запросе проверяется TTL: устаревшие файлы перезаписываются
+  новыми. Утилита `tools/cache_stats.py clear-stale`
+  (в исходниках) позволяет вручную удалить устаревшие файлы.
+- **История просмотров** сохраняется в `data/app_data.db`
+  и используется для функции «Продолжить просмотр».
 
 ---
 
-## Technology stack
+## Технологический стек
 
-| Layer | Technology | Purpose |
+| Слой | Технология | Назначение |
 |---|---|---|
-| Language | Python 3.10+ | Primary language |
-| GUI | **PyQt6** | User interface |
-| Event loop | **qasync** | Bridge between `asyncio` and Qt |
-| HTTP | **aiohttp** | Async requests to sources |
-| Streaming | **libtorrent** | Streaming of external sources (developer mode) |
-| Processes | **psutil** | Child process management and termination |
-| Media | **QMediaPlayer** + FFmpeg | Video playback |
-| Tests | **pytest** | Unit and integration tests |
+| Язык | Python 3.10+ | Основной язык проекта |
+| GUI | **PyQt6** | Пользовательский интерфейс |
+| Event loop | **qasync** | Мост между `asyncio` и Qt |
+| HTTP | **aiohttp** | Асинхронные запросы к источникам |
+| Потоковая доставка | **libtorrent** | Потоковое воспроизведение раздач внешних источников (режим разработчика) |
+| Процессы | **psutil** | Управление и завершение дочерних процессов |
+| Медиа | **QMediaPlayer** + FFmpeg | Воспроизведение видео |
+| Тесты | **pytest** | Юнит- и интеграционные тесты |
 
 ---
 
-## Architecture
+## Архитектура
 
 ```text
 ┌──────────────────────────────────────────────┐
@@ -182,7 +206,7 @@ Additional details:
      │    ┌────▼─────┐              ┌─────▼──────┐
      │    │ HTTP     │              │ libtorrent │
      │    │ (public) │              │ (private,  │
-     │    │          │              │  testing)  │
+     │    │          │              │  тестовый) │
      │    └──────────┘              └─────┬──────┘
      │                                    │
      │                             ┌──────▼─────┐
@@ -199,31 +223,31 @@ Additional details:
 
 ---
 
-## Requirements
+## Требования
 
 - **Windows 10/11**
-- ~200–300 MB of free disk space (dependencies + cache)
-- Internet access for search and playback
+- ~200–300 МБ свободного места (зависимости + кэш)
+- Интернет для поиска и воспроизведения
 
-For **running from source** you additionally need: **Python 3.10+**.
+Для **запуска из исходников** дополнительно: **Python 3.10+**.
 
 ---
 
-## Installation
+## Установка
 
-### From Releases (recommended)
+### Из Releases (рекомендуется)
 
-1. Download the ZIP from the [**Releases**](https://github.com/AkashaForge/ama-gi-player/releases) page
-2. Unpack it into any folder
-3. Run `amagi-player.exe`
-4. Accept the terms of use (disclaimer)
+1. Скачайте ZIP со страницы [**Releases**](https://github.com/AkashaForge/ama-gi-player/releases)
+2. Распакуйте в любую папку
+3. Запустите `amagi-player.exe`
+4. Примите условия использования (дисклеймер)
 
-The database `data/whitelist.db` ships in the ZIP already populated.
-If you delete it, the next launch will create an empty table — the
-feed will stay empty. To restore it from the seed, use
-`tools/apply_seed.py` (in the source tree).
+База `data/whitelist.db` поставляется в ZIP уже заполненной.
+Если её удалить, при следующем запуске будет создана пустая
+таблица — лента останется пустой. Для восстановления из seed
+используйте `tools/apply_seed.py` (в исходниках).
 
-### From source
+### Из исходников
 
 ```bash
 git clone https://github.com/AkashaForge/ama-gi-player.git
@@ -234,134 +258,124 @@ pip install -r requirements.txt
 python main.py
 ```
 
-### For development
-
-```bash
-pip install -r requirements-dev.txt
-pytest
-```
-
 ---
 
-## Usage
+## Использование
 
-1. **Launch the application** and accept the disclaimer.
-2. **Enter a search query** — by default the search runs against
+1. **Запустите приложение** и примите дисклеймер.
+2. **Введите поисковый запрос** — по умолчанию поиск идёт по
    Internet Archive.
-3. **Select a result** — a details card opens with metadata,
-   a poster, and a play button.
-4. **Playback** starts automatically.
-5. **Continue watching** — history is stored locally.
+3. **Выберите результат** — откроется карточка с метаданными,
+   постером и кнопкой воспроизведения.
+4. **Воспроизведение** запустится автоматически.
+5. **Продолжить просмотр** — история сохраняется локально.
 
 ---
 
-## Configuration
+## Конфигурация
 
-### Operating modes
+### Режимы работы
 
-The application runs in one of two modes, determined by the file
-`data/mode.txt`. If the file is absent, `public` is used.
+Приложение работает в одном из двух режимов, определяемых файлом
+`data/mode.txt`. При отсутствии файла используется `public`.
 
-| Mode | Status | Purpose |
+| Режим | Статус | Назначение |
 |---|---|---|
-| `public` | **Supported** | Works with Internet Archive. Default mode |
-| `private` | **Testing, for developers** | Experimental architecture. Not documented and not supported |
+| `public` | **Поддерживается** | Работа с Internet Archive. Режим по умолчанию |
+| `private` | **Тестовый, для разработчиков** | Экспериментальная архитектура. Не документируется и не поддерживается |
 
-### Metadata (optional)
+### Метаданные (опционально)
 
-For extended film metadata (descriptions, posters), the public
-Kinopoisk API can be used. The key is provided in the `.env` file
-next to `amagi-player.exe`:
+Для расширенных метаданных фильмов (описание, постеры) может
+использоваться публичный API Кинопоиска. Ключ задаётся в файле
+`.env` рядом с `amagi-player.exe`:
 
 ```text
-KP_API_KEY=your_key
+KP_API_KEY=ваш_ключ
 ```
 
-Without the key, the application works with Internet Archive, but
-descriptions and posters may be incomplete. The log will contain
-the line `KP_API_KEY is not set — demo mode`.
+Без ключа приложение работает с Internet Archive, но описания
+и постеры могут быть неполными. В логе будет строка
+`KP_API_KEY не задан — демо-режим`.
 
 ---
 
-## Diagnostics
+## Диагностика
 
-The application prints diagnostic messages to the console
-(opened alongside `amagi-player.exe`). Useful lines:
+Приложение выводит диагностические сообщения в консоль
+(открывается вместе с `amagi-player.exe`). Полезные строки:
 
-| Log line | Meaning |
+| Строка в логе | Что означает |
 |---|---|
-| `Mode: PUBLIC (legal-only)` | Public mode is active (normal) |
-| `KP_API_KEY is not set — demo mode` | No Kinopoisk key (optional) |
-| `Feed: page=N, M films` | Feed loaded |
-| `IA query: ...` | Request to Internet Archive |
-| `IA result: N direct_url` | N results found |
-| `Failed to initialize QMediaPlayer` | FFmpeg backend not loaded (check the build) |
+| `Режим: PUBLIC (legal-only)` | Работает публичный режим (норма) |
+| `KP_API_KEY не задан — демо-режим` | Нет ключа Кинопоиска (опционально) |
+| `Лента: page=N, M фильмов` | Лента загружена |
+| `IA query: ...` | Запрос к Internet Archive |
+| `IA итог: N direct_url` | Найдено N результатов |
+| `Failed to initialize QMediaPlayer` | Не загружен FFmpeg-бэкенд (проверьте сборку) |
 
-If the application does not start — launch `amagi-player.exe` from
-PowerShell (`cd <folder>; .\amagi-player.exe`) to see the full
-traceback in the console.
+Если приложение не запускается — запустите `amagi-player.exe`
+из PowerShell (`cd <папка>; .\amagi-player.exe`), чтобы увидеть
+полный traceback в консоли.
 
 ---
 
-## Project structure
+## Структура проекта
 
 ```text
 ama-gi-player/
-├── controllers/          # UI controllers
-├── core/                 # Core (event loop, managers)
-├── data/                 # Configuration and data
-│   ├── whitelist_seed.db # Database of public-domain films
-│   ├── whitelist.db      # Working database (created on first launch)
-│   └── cache/            # Poster and metadata cache
-├── database/             # Local database (history, cache)
-├── search/               # Search engine
-├── services/             # External services
-├── tests/                # Tests (pytest)
-├── tools/                # Utilities
-├── ui/                   # PyQt6 widgets
-├── legal_gate.py         # Disclaimer dialog
-├── legal_texts.py        # Disclaimer and privacy policy texts
-├── main.py               # Entry point
-├── config.py             # Configuration
+├── controllers/          # Контроллеры UI
+├── core/                 # Ядро (event loop, менеджеры)
+├── data/                 # Конфигурация и данные
+│   ├── whitelist_seed.db # База фильмов общественного достояния
+│   ├── whitelist.db      # Рабочая база (создаётся при первом запуске)
+│   └── cache/            # Кэш постеров и метаданных
+├── database/             # Локальная БД (история, кэш)
+├── search/               # Движок поиска
+├── services/             # Внешние сервисы
+├── tests/                # Тесты (pytest)
+├── tools/                # Утилиты
+├── ui/                   # PyQt6-виджеты
+├── legal_gate.py         # Окно дисклеймера
+├── legal_texts.py        # Тексты дисклеймера и политики
+├── main.py               # Точка входа
+├── config.py             # Конфигурация
 ├── requirements.txt
-└── bin/                  # External utilities (only README.txt by default)
+└── bin/                  # Внешние утилиты (только README.txt по умолчанию)
 ```
 
 ---
 
-## Legal information
+## Правовая информация
 
-Amagi-Player is distributed under the
-**GNU General Public License v3.0**.
+Amagi-Player распространяется под **GNU General Public License v3.0**.
 
-- Full license text — [`LICENSE`](LICENSE)
-- Third-party components — [`LICENSES.txt`](LICENSES.txt)
-- Attribution — [`NOTICE`](NOTICE)
-- Code signing policy — [`CODE_SIGNING_POLICY.md`](CODE_SIGNING_POLICY.md)
-- Security policy — [`SECURITY.md`](SECURITY.md)
-- Terms of use and privacy policy are shown on first launch
-  (see `legal_texts.py`)
+- Полный текст лицензии — [`LICENSE`](LICENSE)
+- Сторонние компоненты — [`LICENSES.txt`](LICENSES.txt)
+- Атрибуция — [`NOTICE`](NOTICE)
+- Политика подписи кода — [`CODE_SIGNING_POLICY.md`](CODE_SIGNING_POLICY.md)
+- Политика безопасности — [`SECURITY.md`](SECURITY.md)
+- Условия использования и политика конфиденциальности показываются
+  при первом запуске (см. `legal_texts.py`)
 
-In short:
+Кратко:
 
-- The application does not host or redistribute works.
-- The default sources are open public-domain archives
+- Приложение не хранит и не распространяет произведения.
+- Источники по умолчанию — открытые архивы общественного достояния
   (Internet Archive).
-- The application runs locally, with no analytics or telemetry.
+- Приложение работает локально, без аналитики и телеметрии.
 
 ---
 
-## Contributing
+## Участие в разработке
 
-PRs and Issues are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md)
-for details.
+PR и Issues приветствуются. Подробности — в [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-By submitting a PR, you agree to license your contribution under
-**GPLv3**.
+Отправляя PR, вы соглашаетесь лицензировать свой вклад под **GPLv3**.
 
 ---
 
-## License
+## Лицензия
 
 ```text
 Amagi-Player
