@@ -131,7 +131,8 @@ class WhitelistRepository:
         with use_whitelist_connection() as conn:
             cur = conn.execute(
                 "SELECT kp_id, title_ru, title_en, year, "
-                "archive_identifier, added_at, available "
+                "archive_identifier, description, description_ru, "
+                "poster_source, enriched, added_at, available "
                 "FROM movie_whitelist WHERE kp_id = ?;",
                 (kp_id,),
             )

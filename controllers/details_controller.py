@@ -161,12 +161,16 @@ class DetailsController:
 
     def _metadata_from_whitelist(self, kp_id: int, cover_path: str) -> dict:
         row = WhitelistRepository.get_movie(kp_id)
+        row_dict = dict(row) if row else {}
+        desc_ru = (row_dict.get("description_ru") or "").strip()
+        desc_en = (row_dict.get("description") or "").strip()
+        description = desc_ru or desc_en
         return {
             "kp_id": kp_id,
-            "title": (row["title_ru"] if row else "") or "Без названия",
-            "title_en": (row["title_en"] if row else "") or "",
-            "year": (row["year"] if row else "----"),
-            "description": self._whitelist_description(kp_id, row),
+            "title": row_dict.get("title_ru") or "Без названия",
+            "title_en": row_dict.get("title_en") or "",
+            "year": row_dict.get("year") or "----",
+            "description": description,
             "cover_path": cover_path,
         }
 
