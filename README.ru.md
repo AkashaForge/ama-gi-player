@@ -1,4 +1,4 @@
-[🇬🇧 English](README.md) | [🇷🇺 Русский](README.ru.md)
+[ru Русский](README.md) | [🇬🇧 English](README.ru.md)
 
 <div align="center">
 
