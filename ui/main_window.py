@@ -1,12 +1,11 @@
 """Главное окно Amagi-Player.
 
-v2.0.5 (light theme polish):
-  - исправлен QEasingCurve.Type.OutCubic / InOutQuad;
-  - hover в светлой теме — плавная объёмная тень (QGraphicsDropShadowEffect),
-    никакого opacity → карточки НЕ становятся серыми;
-  - анимация 280 ms с OutCubic (вход) / InOutQuad (выход) — заметно плавнее;
-  - при выходе из светлой темы эффекты полностью удаляются;
-  - event-filter ставится на новые карточки по таймеру (300 ms).
+v2.0.5 (Gallery Editorial):
+  - hover карточек в light-теме: мягкая индиго-тень (QGraphicsDropShadowEffect);
+  - resume island анимированно выезжает снизу (fade + slide-up);
+  - кнопка темы: терракотовый пульс на клик (анимация color);
+  - event-filter ставится на карточки автоматически по QTimer (300 мс);
+  - при выходе из light-темы эффекты полностью удаляются.
 """
 
 # Amagi-Player — desktop media player for public-domain content
@@ -43,6 +42,7 @@ from PyQt6.QtGui import QColor, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QFrame,
     QGraphicsDropShadowEffect,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -75,6 +75,7 @@ class MainWindow(QMainWindow):
         self._is_light_theme = False
         self._noise_pixmap = None
         self._active_animations = {}
+        self._island_effect = None
 
         self._init_ui_core()
         self._load_stylesheet()
@@ -122,25 +123,6 @@ class MainWindow(QMainWindow):
             "EN — только фильмы на английском\n"
             "RU — только на русском (более медленный)"
         )
-        self.language_btn.setStyleSheet("""
-            QPushButton#languageButton {
-                background-color: transparent;
-                color: rgba(255,255,255,0.75);
-                border: 1px solid rgba(255,255,255,0.2);
-                border-radius: 4px;
-                font-size: 11px;
-                font-weight: 800;
-                letter-spacing: 2px;
-                padding: 0px;
-            }
-            QPushButton#languageButton:hover {
-                color: #ffffff;
-                border-color: rgba(255,255,255,0.5);
-            }
-            QPushButton#languageButton:pressed {
-                background-color: rgba(255,255,255,0.05);
-            }
-        """)
         self.language_btn.clicked.connect(self._on_language_btn_clicked)
         header_layout.addWidget(self.language_btn)
 
@@ -157,7 +139,6 @@ class MainWindow(QMainWindow):
         self.details_page = MovieDetailsWidget(content_wrapper)
         self.player_page = MoviePlayerWidget(content_wrapper)
 
-        # settings placeholder
         self.settings_page_placeholder = QWidget()
         settings_layout = QVBoxLayout(self.settings_page_placeholder)
         settings_layout.setContentsMargins(0, 0, 0, 0)
@@ -166,10 +147,8 @@ class MainWindow(QMainWindow):
         settings_back_btn.clicked.connect(lambda: self.screen_stack.setCurrentIndex(0))
         settings_layout.addWidget(settings_back_btn, alignment=Qt.AlignmentFlag.AlignLeft)
         settings_label = QLabel("ЭКРАН НАСТРОЕК (В РАЗРАБОТКЕ)")
+        settings_label.setObjectName("settingsPlaceholder")
         settings_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        settings_label.setStyleSheet(
-            "color: rgba(255,255,255,0.4); font-size: 14px; letter-spacing: 3px;"
-        )
         settings_layout.addStretch()
         settings_layout.addWidget(settings_label)
         settings_layout.addStretch()
@@ -180,7 +159,6 @@ class MainWindow(QMainWindow):
         self.screen_stack.addWidget(self.settings_page_placeholder)
         content_layout.addWidget(self.screen_stack)
 
-        # bottom bar
         bottom_bar = QWidget(content_wrapper)
         bottom_layout = QHBoxLayout(bottom_bar)
         bottom_layout.setContentsMargins(0, 0, 0, 0)
@@ -263,7 +241,7 @@ class MainWindow(QMainWindow):
                     for y in range(header_rect.height()):
                         if random.random() < 0.15:
                             alpha = random.randint(5, 12)
-                            noise_painter.setPen(QColor(255, 255, 255, alpha))
+                            noise_painter.setPen(QColor(120, 100, 70, alpha))
                             noise_painter.drawPoint(x, y)
                 noise_painter.end()
 
@@ -297,16 +275,40 @@ class MainWindow(QMainWindow):
     def show_resume_bar(self, movie_id: int, movie_title: str):
         self._current_resume_id = movie_id
         self.resume_label.setText(f"<b>{movie_title.upper()}</b>")
-        self.resume_island.show()
         self._reposition_resume_island()
+        self._animate_resume_island_in()
 
-    # ================= HOVER (light theme) =================
+    def _animate_resume_island_in(self):
+        if self._island_effect is None:
+            self._island_effect = QGraphicsOpacityEffect(self.resume_island)
+            self.resume_island.setGraphicsEffect(self._island_effect)
+
+        self._island_effect.setOpacity(0.0)
+        base_y = self.height() - self.resume_island.height() - 95
+        base_x = (self.width() - self.resume_island.width()) // 2
+        self.resume_island.move(QPoint(base_x, base_y + 12))
+        self.resume_island.show()
+
+        group = QParallelAnimationGroup(self)
+
+        anim_op = QPropertyAnimation(self._island_effect, b"opacity")
+        anim_op.setDuration(260)
+        anim_op.setStartValue(0.0)
+        anim_op.setEndValue(1.0)
+        anim_op.setEasingCurve(QEasingCurve.Type.OutCubic)
+        group.addAnimation(anim_op)
+
+        anim_pos = QPropertyAnimation(self.resume_island, b"pos")
+        anim_pos.setDuration(260)
+        anim_pos.setStartValue(QPoint(base_x, base_y + 12))
+        anim_pos.setEndValue(QPoint(base_x, base_y))
+        anim_pos.setEasingCurve(QEasingCurve.Type.OutCubic)
+        group.addAnimation(anim_pos)
+
+        group.start(QParallelAnimationGroup.DeletionPolicy.DeleteWhenStopped)
+
+    # ================= HOVER =================
     def _sync_card_filters(self):
-        """Ставит event-filter на все MovieCardWidget.
-
-        В light-теме заранее создаёт DropShadow-эффект (blur=0), чтобы
-        hover-анимация стартовала мгновенно без «первого рывка».
-        """
         for widget in self.findChildren(QWidget):
             if widget.__class__.__name__ == "MovieCardWidget":
                 if not getattr(widget, "_hover_filter_installed", False):
@@ -321,7 +323,7 @@ class MainWindow(QMainWindow):
             effect = QGraphicsDropShadowEffect(card_widget)
             effect.setBlurRadius(0)
             effect.setOffset(0, 0)
-            effect.setColor(QColor(0, 0, 0, 0))
+            effect.setColor(QColor(60, 50, 40, 0))
             card_widget.setGraphicsEffect(effect)
         return effect
 
@@ -334,43 +336,34 @@ class MainWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     def _animate_card_scale(self, card_widget, expand: bool):
-        """Плавное «приподнимание» карточки через объёмную тень.
-
-        Никакого opacity → карточки всегда яркие.
-        На входе тень становится глубже и слегка смещается вниз,
-        создавая эффект парения. На выходе — плавно исчезает.
-        """
+        """Hover: тёплая коричневая тень, карточка не тускнеет."""
         effect = self._ensure_card_shadow(card_widget)
-
-        # Легкий цветной оттенок тени для уникальности (только в light)
-        shadow_color = QColor(0, 0, 0, 120)
-        effect.setColor(shadow_color)
+        effect.setColor(QColor(60, 50, 40, 75))
 
         prev = self._active_animations.pop(card_widget, None)
         if prev is not None:
             prev.stop()
 
         ease = (
-            QEasingCurve.Type.OutCubic
-            if expand
+            QEasingCurve.Type.OutCubic if expand
             else QEasingCurve.Type.InOutQuad
         )
 
         group = QParallelAnimationGroup(self)
 
-        anim_blur = QPropertyAnimation(effect, b"blurRadius", self)
+        anim_blur = QPropertyAnimation(effect, b"blurRadius")
         anim_blur.setDuration(280)
         anim_blur.setEasingCurve(ease)
         anim_blur.setStartValue(float(effect.blurRadius()))
-        anim_blur.setEndValue(24.0 if expand else 0.0)
+        anim_blur.setEndValue(26.0 if expand else 0.0)
         group.addAnimation(anim_blur)
 
-        anim_offset = QPropertyAnimation(effect, b"offset", self)
+        anim_offset = QPropertyAnimation(effect, b"offset")
         anim_offset.setDuration(280)
         anim_offset.setEasingCurve(ease)
         anim_offset.setStartValue(effect.offset())
         anim_offset.setEndValue(
-            QPointF(0.0, 6.0) if expand else QPointF(0.0, 0.0)
+            QPointF(0.0, 7.0) if expand else QPointF(0.0, 0.0)
         )
         group.addAnimation(anim_offset)
 
@@ -378,13 +371,32 @@ class MainWindow(QMainWindow):
         group.start()
 
     # ================= THEME =================
+    def _animate_theme_btn_press(self):
+        """Терракотовый пульс на клик кнопки темы."""
+        effect = self.theme_btn.graphicsEffect()
+        if not isinstance(effect, QGraphicsDropShadowEffect):
+            effect = QGraphicsDropShadowEffect(self.theme_btn)
+            effect.setOffset(0, 0)
+            effect.setBlurRadius(20)
+            effect.setColor(QColor(196, 85, 59, 0))
+            self.theme_btn.setGraphicsEffect(effect)
+
+        anim = QPropertyAnimation(effect, b"color")
+        anim.setDuration(400)
+        anim.setStartValue(QColor(196, 85, 59, 140))
+        anim.setEndValue(QColor(196, 85, 59, 0))
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.start(QParallelAnimationGroup.DeletionPolicy.DeleteWhenStopped)
+
     def _toggle_theme_internal(self):
+        self._animate_theme_btn_press()
+
         self._is_light_theme = not self._is_light_theme
         self._noise_pixmap = None
 
         if self._is_light_theme:
             self.setProperty("theme", "light")
-            self.theme_btn.setText("✦ ТЕМНАЯ ТЕМА")
+            self.theme_btn.setText("✦ ТЁМНАЯ ТЕМА")
         else:
             self.setProperty("theme", "dark")
             self.theme_btn.setText("✦ СВЕТЛАЯ ТЕМА")
@@ -395,17 +407,6 @@ class MainWindow(QMainWindow):
         for widget in self.findChildren(QWidget):
             widget.style().unpolish(widget)
             widget.style().polish(widget)
-
-            if (widget.objectName() == "coverPlaceholder"
-                    and widget.__class__.__name__ != "MovieCardWidget"):
-                if self._is_light_theme:
-                    widget.setStyleSheet(
-                        "background-color: rgba(0, 0, 0, 0.4); border-radius: 24px;"
-                    )
-                else:
-                    widget.setStyleSheet(
-                        "background-color: rgba(0, 0, 0, 0.2); border-radius: 18px;"
-                    )
 
             if widget.__class__.__name__ == "MovieCardWidget":
                 if self._is_light_theme:

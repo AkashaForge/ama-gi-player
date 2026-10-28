@@ -1,13 +1,17 @@
-"""Контроллер карточки фильма + lazy resolve kp_id.
+"""Контроллер карточки фильма.
 
-v2.0.4:
-  - KP API используется ТОЛЬКО в private (LEGAL_ONLY_MODE=False);
-  - resume island ("Продолжить просмотр") скрывается при открытии
-    карточки и возвращается при возврате в ленту;
-  - _MAX_DESCRIPTION_LEN = 500 (виджет ещё раз обрежет до 450
-    для отображения с троеточием);
-  - обложка и описание грузятся параллельно, обновляются точечно.
+v2.0.5:
+  - в PUBLIC (config.LEGAL_ONLY_MODE=True) KP API НЕ вызывается;
+  - описание: из whitelist DB (если поле есть), иначе из
+    archive.org/metadata (асинхронно);
+  - обложка: seed → IA (archive_identifier) → IA search → KP (только private);
+  - _MAX_DESCRIPTION_LEN = 500 (виджет обрежет до 450 для отображения);
+  - resume island скрывается при открытии карточки и возвращается
+    при возврате в ленту;
+  - _apply_cover_to_ui использует update_cover() — точечно,
+    не перерисовывает всю карточку.
 """
+
 # Amagi-Player — desktop media player for public-domain content
 # Copyright (C) 2026 AkashaForge
 #
@@ -43,8 +47,6 @@ _MAX_DESCRIPTION_LEN = 500
 
 _WHITELIST_DESC_FIELDS = (
     "description_ru",
-    "overview_ru",
-    "plot_ru",
     "description",
 )
 
@@ -95,9 +97,6 @@ class DetailsController:
         self._current_cover_task = None
         self._current_desc_task = None
 
-    # ------------------------------------------------------------------
-    #  Режимы
-    # ------------------------------------------------------------------
     def _is_public(self) -> bool:
         return bool(getattr(config, "LEGAL_ONLY_MODE", True))
 
@@ -122,7 +121,6 @@ class DetailsController:
                 and os.path.getsize(cache_path) > _MIN_POSTER_BYTES):
             cover_path = cache_path
 
-        # Метаданные
         if kp_id < 0:
             metadata = self._metadata_from_whitelist(kp_id, cover_path)
         elif self._kp_enabled():
@@ -142,15 +140,12 @@ class DetailsController:
         self.main_window.details_page.update_movie_details(metadata)
         self.main_window.screen_stack.setCurrentIndex(1)
 
-        # Будет ли lazy_resolve? Если да — IA-описание не нужно,
-        # KP всё равно перезапишет после resolve.
         will_lazy_resolve = (
             self._kp_enabled()
             and kp_id < 0
             and getattr(config, "LAZY_RESOLVE", True)
         )
 
-        # Фоновые задачи
         if not cover_path:
             self._current_cover_task = self.loop.create_task(
                 self._load_cover_for_details(
@@ -262,7 +257,6 @@ class DetailsController:
     ):
         cache_path = os.path.join(str(config.CACHE_DIR), f"{kp_id}.jpg")
 
-        # 1. seed
         seed_dir = os.path.join(str(config.DATA_DIR), "seed_posters")
         p = os.path.join(seed_dir, f"{kp_id}.jpg")
         if os.path.exists(p) and os.path.getsize(p) > _MIN_POSTER_BYTES:
@@ -274,7 +268,6 @@ class DetailsController:
             self._apply_cover_to_ui(kp_id, p)
             return
 
-        # 2. IA по identifier
         archive_id = WhitelistRepository.get_archive_identifier(kp_id)
         if archive_id:
             ok = await self._try_ia_thumbnail(archive_id, cache_path)
@@ -282,7 +275,6 @@ class DetailsController:
                 self._apply_cover_to_ui(kp_id, cache_path)
                 return
 
-        # 3. IA search по title/year
         if not archive_id and (title_en or title_ru):
             found_id = await self._search_archive_identifier(
                 title_en or title_ru, year
@@ -293,7 +285,6 @@ class DetailsController:
                     self._apply_cover_to_ui(kp_id, cache_path)
                     return
 
-        # 4. KP — только в private
         if self._kp_enabled() and (kp_id > 0 or title_en):
             ok = await self._try_kp_cover(
                 kp_id, title_en or title_ru, year, cache_path
@@ -452,8 +443,10 @@ class DetailsController:
             return False
 
     async def _kp_search(self, query: str) -> list[dict]:
-        url = ("https://kinopoiskapiunofficial.tech"
-               "/api/v2.1/films/search-by-keyword")
+        url = (
+            "https://kinopoiskapiunofficial.tech"
+            "/api/v2.1/films/search-by-keyword"
+        )
         headers = {
             "X-API-KEY": config.KP_API_KEY,
             "Accept": "application/json",
@@ -536,7 +529,6 @@ class DetailsController:
     # ------------------------------------------------------------------
     def handle_back_to_feed(self):
         self.main_window.screen_stack.setCurrentIndex(0)
-        # Возвращаем "Продолжить просмотр", если есть незакрытая сессия
         self.check_resume_island()
 
     def handle_resume_playback(self, movie_id: int):

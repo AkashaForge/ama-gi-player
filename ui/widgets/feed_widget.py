@@ -1,6 +1,6 @@
 """Лента фильмов.
 
-v2.0.8:
+v2.0.5:
   - защита от бесконечного цикла пагинации: после загрузки карточек
     флаг _is_loading_next не сбрасывается до тех пор, пока QScrollArea
     не пересчитает max_scroll (layout перестраивается асинхронно,
@@ -11,6 +11,22 @@ v2.0.8:
   - reset_loading_state() используется только для жёсткого сброса
     (clear_grid / run_search).
 """
+
+# Amagi-Player — desktop media player for public-domain content
+# Copyright (C) 2026 AkashaForge
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QFrame, QGridLayout, QLabel, QScrollArea, QVBoxLayout, QWidget

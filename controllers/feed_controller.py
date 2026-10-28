@@ -1,12 +1,15 @@
 """Контроллер ленты.
 
-v2.0.8:
-  - в конце load_feed:
-    * has_more=True  → флаг сбрасывается в _on_scroll_moved при
-      пересчёте max_scroll (защита от цикла пагинации);
-    * has_more=False → feed_page.mark_end_reached() — блокирует
-      новые emit, пока пользователь не начнёт новый поиск;
-  - run_search вызывает feed_page.mark_end_not_reached().
+v2.0.5:
+  - в PUBLIC (config.LEGAL_ONLY_MODE=True) KP API не вызывается;
+  - reset_loading_state вызывается ВСЕГДА в конце load_feed
+    (раньше только при has_more=True, из-за чего при прерывании
+    или последней странице флаг залипал в True);
+  - при generation mismatch — тоже сброс;
+  - run_search() сбрасывает флаг и mark_end_not_reached;
+  - mark_end_reached() при has_more=False блокирует новые emit;
+  - QTimer.singleShot(50, reset) — страховка от race condition с layout;
+  - _log_db_stats() — диагностика БД при первом запуске (только public).
 """
 
 # Amagi-Player — desktop media player for public-domain content
@@ -31,6 +34,7 @@ import re
 import time
 
 import aiohttp
+from PyQt6.QtCore import QTimer
 
 import config
 from core.logging_setup import get_logger
@@ -87,6 +91,7 @@ class FeedController:
     async def load_feed(self, clear_grid: bool = False):
         if clear_grid:
             self.main_window.feed_page.clear_grid()
+            self.main_window.feed_page.reset_loading_state()
             self._db_stats_logged = False
 
         generation = self._search_generation
@@ -137,6 +142,7 @@ class FeedController:
             except Exception:
                 pass
 
+        added_count = 0
         for data in movies:
             kp_id = data.get("kp_id")
             if not kp_id:
@@ -149,20 +155,18 @@ class FeedController:
             )
             card.play_requested.connect(self._on_card_clicked)
             added = self.main_window.feed_page.add_card_to_grid(card)
-            if added and not data.get("cover_path"):
-                self.loop.create_task(
-                    self._load_poster_cascade(
-                        kp_id, card,
-                        title=data.get("title", ""),
-                        title_en=data.get("title_en", ""),
-                        year=data.get("year", ""),
+            if added:
+                added_count += 1
+                if not data.get("cover_path"):
+                    self.loop.create_task(
+                        self._load_poster_cascade(
+                            kp_id, card,
+                            title=data.get("title", ""),
+                            title_en=data.get("title_en", ""),
+                            year=data.get("year", ""),
+                        )
                     )
-                )
 
-        # === Ключевой фикс: has_more ===
-        # False → блокируем emit до нового поиска (нет цикла)
-        # True  → флаг сбросится автоматически в _on_scroll_moved,
-        #         когда layout пересчитает max_scroll
         if not has_more:
             self.main_window.feed_page.mark_end_reached()
             log.info(
@@ -171,6 +175,7 @@ class FeedController:
             )
 
     def _log_db_stats(self):
+        """Один раз при первом запуске — реальная статистика БД."""
         try:
             total = WhitelistRepository.count()
             avail = WhitelistRepository.count_available()
@@ -182,7 +187,8 @@ class FeedController:
             if avail < total:
                 log.warning(
                     "ВНИМАНИЕ: %d фильмов имеют available != 1 "
-                    "и не показываются в public-режиме.",
+                    "и не показываются в public-режиме. "
+                    "Проверьте: python tools/apply_seed.py",
                     total - avail,
                 )
         except Exception as e:
@@ -404,7 +410,6 @@ class FeedController:
     def run_search(self):
         self._search_generation += 1
         self.current_page = 1
-        # Сброс конца ленты и флагов — новый поиск может дать другие данные
         self.main_window.feed_page.mark_end_not_reached()
         self.main_window.feed_page.reset_loading_state()
         self.loop.create_task(self.load_feed(clear_grid=True))

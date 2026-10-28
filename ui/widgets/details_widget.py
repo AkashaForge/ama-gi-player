@@ -1,3 +1,30 @@
+"""Экран деталей. Гарантированная эмиссия start_streaming_requested.
+
+v2.0.5:
+  - ОРИГИНАЛЬНАЯ компоновка (QHBoxLayout: постер слева, текст справа);
+  - постер закреплён вверху через AlignTop — не съезжает при длинном описании;
+  - правая колонка: title, year, desc (capped 220px), play_btn внизу;
+  - update_description() ставит (English) badge для не-кириллических текстов;
+  - "Загрузка описания..." вместо заглушки "Фильм общественного достояния";
+  - цвета через QSS objectNames (#detailsTitle, #detailsYear, #detailsDescription).
+"""
+
+# Amagi-Player — desktop media player for public-domain content
+# Copyright (C) 2026 AkashaForge
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 import os
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -50,7 +77,7 @@ class MovieDetailsWidget(QWidget):
         self.big_cover.setObjectName("coverPlaceholder")
         self.big_cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.big_cover.setText("ЗАГРУЗКА...")
-        # ФИКС 1: AlignTop — постер прижат к верху, не центрируется
+        # ФИКС: AlignTop — постер прижат к верху, не центрируется
         content_layout.addWidget(
             self.big_cover, alignment=Qt.AlignmentFlag.AlignTop
         )
@@ -59,25 +86,19 @@ class MovieDetailsWidget(QWidget):
         text_layout.setSpacing(15)
 
         self.title_label = QLabel("НАЗВАНИЕ ФИЛЬМА", self)
-        self.title_label.setStyleSheet(
-            "color: #FFFFFF; font-size: 28px; font-weight: 900; letter-spacing: 2px;"
-        )
+        self.title_label.setObjectName("detailsTitle")
         self.title_label.setWordWrap(True)
         text_layout.addWidget(self.title_label)
 
         self.year_label = QLabel("---- ГОД", self)
-        self.year_label.setStyleSheet(
-            "color: rgba(255,255,255,0.5); font-size: 14px; font-weight: 700; letter-spacing: 1px;"
-        )
+        self.year_label.setObjectName("detailsYear")
         text_layout.addWidget(self.year_label)
 
         self.desc_label = QLabel("Загрузка описания...", self)
-        self.desc_label.setStyleSheet(
-            "color: rgba(255,255,255,0.8); font-size: 15px; line-height: 24px;"
-        )
+        self.desc_label.setObjectName("detailsDescription")
         self.desc_label.setWordWrap(True)
         self.desc_label.setAlignment(Qt.AlignmentFlag.AlignTop)
-        # ФИКС 2: ограничение высоты — описание не вылезает за постер
+        # ФИКС: ограничение высоты — описание не вылезает за постер
         self.desc_label.setMaximumHeight(220)
         text_layout.addWidget(self.desc_label)
 
@@ -125,6 +146,7 @@ class MovieDetailsWidget(QWidget):
             self.big_cover.setText("ЗАГРУЗКА ОБЛОЖКИ...")
 
     def update_cover(self, cover_path: str | None):
+        """Идемпотентно ставит постер."""
         if not cover_path or not os.path.exists(cover_path):
             self.big_cover.clear()
             self.big_cover.setText("ОБЛОЖКА\nНЕДОСТУПНА")
@@ -141,6 +163,11 @@ class MovieDetailsWidget(QWidget):
         print(f"[DETAILS] Постер {pixmap.width()}x{pixmap.height()} ← {cover_path}")
 
     def update_description(self, text: str | None):
+        """Идемпотентно ставит описание.
+
+        Если текст не на кириллице — добавляет пометку (English),
+        чтобы пользователь понимал, почему описание не на русском.
+        """
         clean = (text or "").strip()
         if not clean:
             title = self._last_metadata.get("title", "Этот фильм")
@@ -152,7 +179,6 @@ class MovieDetailsWidget(QWidget):
             self.desc_label.setText(fallback)
             return
 
-        # Обрезка троеточием — описание не вылезает за постер
         clean = _truncate_for_display(clean)
 
         letters = [c for c in clean if c.isalpha()]
@@ -166,8 +192,8 @@ class MovieDetailsWidget(QWidget):
             self.desc_label.setText(clean)
         else:
             self.desc_label.setText(
-                f"<i style='color: rgba(255,255,255,0.45); "
-                f"font-size: 12px; letter-spacing: 1px;'>(English)</i>"
+                f"<i style='color: #8B8378; font-size: 12px; "
+                f"letter-spacing: 1px;'>(English)</i>"
                 f"<br>{clean}"
             )
 
