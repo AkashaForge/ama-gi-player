@@ -111,7 +111,10 @@ jobs:
             $tag = "$env:GITHUB_REF_NAME"
           }
           $version = $tag -replace '^v', ''
-          $parts = @($version.Split('.'))
+          # Для Nuitka --file-version нужны ТОЛЬКО цифры через точку.
+          # "2.1.0-beta.1" -> "2.1.0" -> "2.1.0.0"
+          $cleanVersion = $version -replace '[-+].*$', ''
+          $parts = @($cleanVersion.Split('.'))
           while ($parts.Count -lt 4) { $parts += "0" }
           $version4 = ($parts | Select-Object -First 4) -join '.'
           "tag=$tag"           >> $env:GITHUB_OUTPUT
@@ -287,4 +290,4 @@ jobs:
           generate_release_notes: true
           files: dist/amagi-player-v${{ steps.version.outputs.version }}-windows.zip
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(github.ref_name, 'beta') }}
