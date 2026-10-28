@@ -55,6 +55,15 @@ The application runs **locally**, with no analytics or telemetry.
 Network requests are made only to the sources that the user
 explicitly chooses for search and playback.
 
+## Naming
+
+The project is called **Amagi-Player**. The name is inspired by the ancient
+Sumerian word 𒂼𒄄 *ama-gi* ("freedom", "return to the mother").
+
+The repository slug is `ama-gi-player` (hyphenated, legacy from the Sumerian
+form). The executable is `amagi-player.exe` (no hyphen). Both refer to the
+same project.
+
 ---
 
 ## Features
