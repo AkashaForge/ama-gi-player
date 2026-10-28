@@ -19,9 +19,7 @@ jobs:
         python-version: ["3.11", "3.12", "3.13"]
 
     env:
-      # PyQt6 без дисплея на CI — offscreen
       QT_QPA_PLATFORM: offscreen
-      # Отключаем аналитику PyQt6
       PYTHONUNBUFFERED: "1"
 
     steps:
@@ -56,9 +54,9 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          python -m compileall -q main.py config.py controllers/ core/ database/ search/ services/ ui/ tools/ 2>&1 | Tee-Object -Variable out
-          if ($out -match "SyntaxError|IndentationError") {
-            Write-Host "Syntax errors found" -ForegroundColor Red
+          python -m compileall -q main.py config.py controllers/ core/ database/ search/ services/ ui/ tools/
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Compile errors found" -ForegroundColor Red
             exit 1
           }
           Write-Host "All modules compile" -ForegroundColor Green
@@ -72,27 +70,3 @@ jobs:
         shell: pwsh
         run: |
           pytest tests/ -v --tb=short --color=yes
-
-      - name: Pytest — fail if no tests collected
-        if: always()
-        shell: pwsh
-        run: |
-          # Проверка, что тесты реально есть (а не 0 collected)
-          python -c "
-          import subprocess, sys
-          r = subprocess.run(['pytest', 'tests/', '--collect-only', '-q'],
-                              capture_output=True, text=True)
-          lines = r.stdout.strip().splitlines()
-          # pytest выводит 'N tests collected' в конце
-          count = 0
-          for line in lines:
-              if 'test' in line.lower() and 'collected' in line.lower():
-                  try:
-                      count = int(line.split()[0])
-                  except Exception:
-                      pass
-          print(f'Collected: {count}')
-          if count < 1:
-              print('ERROR: no tests collected. Create tests/test_smoke.py')
-              sys.exit(1)
-          "
