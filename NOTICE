@@ -5,10 +5,11 @@ This product is licensed under the GNU General Public License v3.0.
 See the LICENSE file for the full text of the license.
 
 This product includes software developed by third parties.
-See LICENSES.txt for the full list and license texts.
+See LICENSES.txt for the complete list of third-party components
+and their license texts.
 
 --------------------------------------------------------------------
-Third-party components
+Third-party components (summary)
 --------------------------------------------------------------------
 
 Runtime dependencies:
@@ -21,13 +22,17 @@ Runtime dependencies:
   - psutil             — BSD 3-Clause
   - nodriver           — MIT
   - websockets         — BSD 3-Clause
+  - FFmpeg             — LGPL 2.1+ / GPL 2+ (depends on the build)
 
-Development dependencies:
+Development dependencies (not shipped in release builds):
 
   - pytest             — MIT
 
 All of the above licenses are compatible with the GNU General
 Public License v3.0.
+
+For the complete license texts and source repository links,
+see LICENSES.txt.
 
 --------------------------------------------------------------------
 Contact
