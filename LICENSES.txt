@@ -1,21 +1,23 @@
-Amagi-Player распространяется под лицензией
+Amagi-Player is distributed under the
 GNU General Public License v3.0.
-Полный текст: https://www.gnu.org/licenses/gpl-3.0.txt
+Full text: https://www.gnu.org/licenses/gpl-3.0.txt
+
+Russian translation of this file: LICENSES.ru.txt
 
 ====================================================================
-Сторонние компоненты, входящие в состав приложения
+Third-party components bundled with the application
 ====================================================================
 
-Amagi-Player использует следующие сторонние библиотеки
-(см. requirements.txt и requirements-dev.txt):
+Amagi-Player uses the following third-party libraries
+(see requirements.txt and requirements-dev.txt):
 
-Runtime-зависимости:
+Runtime dependencies:
 
   - aiohttp          — Apache License 2.0
                        https://github.com/aio-libs/aiohttp
 
-  - PyQt6            — GNU GPL v3.0 (или коммерческая лицензия
-                       Riverbank Computing)
+  - PyQt6            — GNU GPL v3.0 (or commercial license
+                       from Riverbank Computing)
                        https://riverbankcomputing.com/software/pyqt/
 
   - qasync           — BSD 2-Clause
@@ -33,10 +35,22 @@ Runtime-зависимости:
   - websockets       — BSD 3-Clause
                        https://github.com/python-websockets/websockets
 
-  - FFmpeg           — LGPL 2.1+ / GPL 2+ (зависит от конкретной сборки)
+  - FFmpeg           — LGPL 2.1+ / GPL 2+ (depends on the build)
                        https://ffmpeg.org/legal.html
 
-Все перечисленные лицензии совместимы с GNU GPL v3.0.
+Development dependencies (not shipped in release builds):
 
-Полные тексты лицензий сторонних компонентов доступны по ссылкам
-выше, а также в исходных репозиториях соответствующих проектов.
+  - pytest           — MIT
+                       https://github.com/pytest-dev/pytest
+
+All of the above licenses are compatible with the GNU GPL v3.0.
+
+Full texts of the third-party licenses are available at the links
+above, as well as in the source repositories of the respective
+projects.
+
+====================================================================
+Russian translation
+====================================================================
+
+Русский перевод: см. файл LICENSES.ru.txt в корне репозитория.
