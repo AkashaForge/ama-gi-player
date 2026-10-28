@@ -363,6 +363,8 @@ Amagi-Player is distributed under the
 **GNU General Public License v3.0**.
 
 - Full license text — [`LICENSE`](LICENSE)
+- License headers — every source file starts with a GPLv3 notice
+  (see `main.py`, `config.py`, or any file in `controllers/` or `ui/`)
 - Third-party components — [`LICENSES.txt`](LICENSES.txt)
 - Attribution — [`NOTICE`](NOTICE)
 - Code signing policy — [`CODE_SIGNING_POLICY.md`](CODE_SIGNING_POLICY.md)
