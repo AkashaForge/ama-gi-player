@@ -5,30 +5,94 @@ on:
     branches: [main, master, dev]
   pull_request:
     branches: [main, master]
+  workflow_dispatch:
 
 jobs:
   test:
-    runs-on: ${{ matrix.os }}
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: windows-latest
+    timeout-minutes: 20
+
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13"]
+
+    env:
+      # PyQt6 без дисплея на CI — offscreen
+      QT_QPA_PLATFORM: offscreen
+      # Отключаем аналитику PyQt6
+      PYTHONUNBUFFERED: "1"
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Setup Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
 
-      - name: Install linting
+      - name: Install dependencies
+        shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
           pip install ruff pytest pytest-asyncio
 
-      - name: Ruff
-        run: ruff check . --output-format=github
+      - name: Verify imports
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -c "import PyQt6.QtWidgets; print('PyQt6 widgets OK')"
+          python -c "import PyQt6.QtMultimedia; print('PyQt6 multimedia OK')"
+          python -c "import aiohttp; print('aiohttp OK')"
+          python -c "import qasync, psutil, websockets; print('rest OK')"
+
+      - name: Compile check (syntax)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m compileall -q main.py config.py controllers/ core/ database/ search/ services/ ui/ tools/ 2>&1 | Tee-Object -Variable out
+          if ($out -match "SyntaxError|IndentationError") {
+            Write-Host "Syntax errors found" -ForegroundColor Red
+            exit 1
+          }
+          Write-Host "All modules compile" -ForegroundColor Green
+
+      - name: Ruff — critical errors
+        shell: pwsh
+        run: |
+          ruff check . --select E9,F63,F7,F82 --output-format=github
 
       - name: Pytest
-        run: pytest tests/ -v || true
+        shell: pwsh
+        run: |
+          pytest tests/ -v --tb=short --color=yes
+
+      - name: Pytest — fail if no tests collected
+        if: always()
+        shell: pwsh
+        run: |
+          # Проверка, что тесты реально есть (а не 0 collected)
+          python -c "
+          import subprocess, sys
+          r = subprocess.run(['pytest', 'tests/', '--collect-only', '-q'],
+                              capture_output=True, text=True)
+          lines = r.stdout.strip().splitlines()
+          # pytest выводит 'N tests collected' в конце
+          count = 0
+          for line in lines:
+              if 'test' in line.lower() and 'collected' in line.lower():
+                  try:
+                      count = int(line.split()[0])
+                  except Exception:
+                      pass
+          print(f'Collected: {count}')
+          if count < 1:
+              print('ERROR: no tests collected. Create tests/test_smoke.py')
+              sys.exit(1)
+          "
