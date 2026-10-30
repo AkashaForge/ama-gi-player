@@ -1,167 +1,124 @@
-"""
-Группировка magnet-источников по info-hash для multi-swarm.
-
-Один и тот же файл может быть на разных сервисах — у всех одинаковый info-hash. Объединение даёт пиров
-со всех трекеров в один swarm.
-
-Также обогащает magnet-ссылки дефолтными публичными trackers, если
-в исходной ссылке их < 5.
-"""
-
-# Amagi-Player — desktop media player for public-domain content
-# Copyright (C) 2026 AkashaForge
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
+"""Группировка magnet по info-hash + enrichment."""
 import base64
 import re
 
 from core.logging_setup import get_logger
+from services.torrent.tracker_balancer import DEFAULT_TRACKERS_FALLBACK
 
 log = get_logger("lt.swarm_grouper")
 
-
 _BTIH_RE = re.compile(r'btih:([a-fA-F0-9]{40}|[A-Z2-7]{32})', re.IGNORECASE)
 _TR_RE = re.compile(r'[?&]tr=([^&]+)')
-
-
-# Публичные трекеры, которые работают в 2024-2026
-DEFAULT_TRACKERS = (
-    "udp://tracker.opentrackr.org:1337/announce",
-    "udp://open.demonii.com:1337/announce",
-    "udp://tracker.openbittorrent.com:6969/announce",
-    "udp://exodus.desync.com:6969/announce",
-    "udp://tracker.torrent.eu.org:451/announce",
-    "udp://tracker.coppersurfer.tk:6969/announce",
-    "udp://tracker.leechers-paradise.org:6969/announce",
-)
+_HASH_IN_URL_RE = re.compile(r'\b([a-fA-F0-9]{40})\b')
+_TORRENT_URL_HINTS = (".torrent", "/download/", "/dl/", "/torrent/")
 
 
 def extract_info_hash(url: str) -> str | None:
-    """
-    Извлекает info-hash из magnet-ссылки.
-    Возвращает hex (40 символов) или None.
-    """
-    if not url or not url.startswith("magnet:"):
+    if not url:
         return None
-    m = _BTIH_RE.search(url)
-    if not m:
-        return None
-    raw = m.group(1)
-    if len(raw) == 40:
-        return raw.lower()
-    try:
-        decoded = base64.b32decode(raw.upper())
-        return decoded.hex()
-    except Exception:
-        return None
+    if url.startswith("magnet:"):
+        m = _BTIH_RE.search(url)
+        if not m:
+            return None
+        raw = m.group(1)
+        if len(raw) == 40:
+            return raw.lower()
+        try:
+            return base64.b32decode(raw.upper()).hex()
+        except Exception:
+            return None
+    low = url.lower()
+    if any(h in low for h in _TORRENT_URL_HINTS):
+        m = _HASH_IN_URL_RE.search(url)
+        if m:
+            return m.group(1).lower()
+    return None
 
 
 def extract_trackers(url: str) -> list[str]:
-    """Извлекает список trackers (tr=...) из magnet-ссылки."""
     if not url:
         return []
     return [tr for tr in _TR_RE.findall(url) if tr]
 
 
-def enrich_magnet_with_default_trackers(url: str) -> str:
-    """
-    Добавляет дефолтные трекеры к magnet, если их меньше 5.
-    """
+def _merge_trackers(existing: list[str], extra: list[str] | None) -> list[str]:
+    seen = set(existing)
+    out = list(existing)
+    for t in (extra or []):
+        if t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
+
+
+def enrich_magnet_with_default_trackers(
+    url: str, extra_trackers: list[str] | None = None
+) -> str:
     if not url or not url.startswith("magnet:"):
         return url
-
     existing = extract_trackers(url)
-    if len(existing) >= 5:
+    if len(existing) >= 5 and not extra_trackers:
         return url
-
+    pool = _merge_trackers(existing, extra_trackers or [])
+    if len(pool) < 5:
+        pool = _merge_trackers(pool, list(DEFAULT_TRACKERS_FALLBACK))
     existing_set = set(existing)
-    new_tr = [tr for tr in DEFAULT_TRACKERS if tr not in existing_set]
-    if not new_tr:
+    new = [t for t in pool if t not in existing_set]
+    if not new:
         return url
-
-    tr_str = "".join(f"&tr={tr}" for tr in new_tr)
-    return url + tr_str
+    return url + "".join(f"&tr={t}" for t in new)
 
 
-def group_sources_by_hash(sources: list[dict]) -> dict[str, list[dict]]:
-    """
-    Группирует источники по info-hash.
-
-    Источники без info-hash (torrent_url, magnet без btih) — идут в отдельные
-    группы со специальным ключом "__orphan_N".
-
-    Возвращает: {info_hash: [source, source, ...]}
-    """
+def group_sources_by_hash(
+    sources: list[dict], extra_trackers: list[str] | None = None
+) -> dict[str, list[dict]]:
     groups: dict[str, list[dict]] = {}
-
     for s in sources:
-        url = s.get("url", "")
-        h = extract_info_hash(url)
-
+        h = extract_info_hash(s.get("url", ""))
         if not h:
-            key = f"__orphan_{id(s)}"
-            groups.setdefault(key, []).append(s)
-            continue
+            groups.setdefault(f"__orphan_{id(s)}", []).append(s)
+        else:
+            groups.setdefault(h, []).append(s)
 
-        groups.setdefault(h, []).append(s)
-
-    # Логируем группы с > 1 источником (это и есть multi-swarm)
     multi = {h: srcs for h, srcs in groups.items()
              if not h.startswith("__") and len(srcs) > 1}
     if multi:
         log.info("Multi-swarm groups: %d", len(multi))
         for h, srcs in sorted(multi.items(),
                               key=lambda x: len(x[1]), reverse=True)[:5]:
-            total_seeders = sum(s.get("seeders", 0) for s in srcs)
+            total = sum(s.get("seeders", 0) for s in srcs)
             trackers = set()
             for s in srcs:
                 trackers.update(extract_trackers(s.get("url", "")))
-            log.info(
-                "  hash=%s... x%d sources, %d seeders суммарно, "
-                "%d unique trackers",
-                h[:12], len(srcs), total_seeders, len(trackers),
-            )
-
+            log.info("  hash=%s x%d, %d seeders, %d trackers",
+                     h[:12], len(srcs), total, len(trackers))
     return groups
 
 
-def merge_magnets_in_group(sources: list[dict]) -> str:
-    """
-    Объединяет все magnet-ссылки в группе в одну с расширенным списком
-    trackers. Берёт magnet из первого источника, добавляет trackers
-    из остальных + дефолтные если их всё ещё < 5.
-    """
+def merge_magnets_in_group(
+    sources: list[dict], extra_trackers: list[str] | None = None
+) -> str:
     if not sources:
         return ""
-
-    base = sources[0].get("url", "")
-    if not base.startswith("magnet:"):
-        return base
+    base = ""
+    for s in sources:
+        u = s.get("url", "")
+        if u.startswith("magnet:"):
+            base = u
+            break
+    if not base:
+        return sources[0].get("url", "")
 
     all_trackers = set()
     for s in sources:
         all_trackers.update(extract_trackers(s.get("url", "")))
-
-    # Если после объединения трекеров всё ещё < 5 — добавляем дефолтные
+    if extra_trackers:
+        all_trackers.update(extra_trackers)
     if len(all_trackers) < 5:
-        all_trackers.update(DEFAULT_TRACKERS)
+        all_trackers.update(DEFAULT_TRACKERS_FALLBACK)
 
     existing = set(extract_trackers(base))
-    new_trackers = all_trackers - existing
-    if not new_trackers:
+    new = all_trackers - existing
+    if not new:
         return base
-
-    tr_str = "".join(f"&tr={tr}" for tr in new_trackers)
-    return base + tr_str
+    return base + "".join(f"&tr={t}" for t in new)

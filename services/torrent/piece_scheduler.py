@@ -6,6 +6,11 @@
     Дедлайн ДОЛЖЕН быть положительным (100ms минимум).
   - piece_priority(7) ставится явно — не надеемся на file_priority
     (при seek file_priority уже не влияет на новые пиесы).
+
+v2.0.8:
+  - force_deadline(piece, lookahead): ставит deadline немедленно
+    на piece + lookahead pieces. Вызывается из StreamSession.wait_for_piece
+    при каждом HTTP Range запросе (не только через on_position).
 """
 
 # Amagi-Player — desktop media player for public-domain content
@@ -36,7 +41,6 @@ class PieceScheduler:
         self._current_piece = -1
         self._current_byte_pos = 0
 
-        # deadline 0 = "no deadline" в libtorrent → заменяем на 100ms
         raw_head = getattr(
             config, "PIECE_SCHEDULER_PLAYHEAD_DEADLINE_MS", 100
         )
@@ -75,13 +79,11 @@ class PieceScheduler:
         if not handle or piece < 0 or piece >= self.geometry.num_pieces:
             return
 
-        # 1. Явный high priority
         try:
             handle.piece_priority(piece, self.PRIORITY_TOP)
         except Exception as e:
             log.debug("piece_priority(%d): %s", piece, e)
 
-        # 2. Positive deadline (100ms минимум — иначе "no deadline")
         if deadline_ms <= 0:
             deadline_ms = self.DEADLINE_HEAD_MS
         try:
@@ -112,8 +114,6 @@ class PieceScheduler:
         self.geometry.current_piece = piece
         self._apply_deadlines(piece)
 
-        # Trailing retention: пиесы ДО playhead тоже нужны
-        # (FFmpeg может перечитать заголовок/Cues)
         for i in range(1, self.TRAILING_RETENTION + 1):
             p = piece - i
             if p >= 0:
@@ -129,6 +129,33 @@ class PieceScheduler:
         self._current_piece = -1
         self.on_position(byte_pos)
 
+    def force_deadline(self, piece: int, lookahead: int | None = None):
+        """
+        v2.0.8: принудительно ставит deadline на piece + lookahead pieces.
+
+        Вызывается из wait_for_piece при КАЖДОМ HTTP Range запросе —
+        даже если piece не «playhead» (например FFmpeg probe в середине
+        файла или moov-атом). Не полагается на on_position, который
+        игнорирует повторный вызов для того же piece.
+
+        Deadline в libtorrent сохраняется ~15s, потом снимается.
+        Поэтому StreamSession.wait_for_piece вызывает force_deadline
+        каждые PIECE_SCHEDULER_DEADLINE_REFRESH_SEC секунд.
+        """
+        if not self.geometry.handle:
+            return
+        if piece < 0 or piece >= self.geometry.num_pieces:
+            return
+
+        la = lookahead if lookahead is not None else self.LOOKAHEAD
+        for i in range(la):
+            p = piece + i
+            if p >= self.geometry.num_pieces:
+                break
+            deadline = self.DEADLINE_HEAD_MS + i * self.DEADLINE_STEP_MS
+            self._set_high_priority(p, deadline)
+        log.debug("force_deadline: piece=%d la=%d", piece, la)
+
     def on_startup(self, first_piece: int, adaptive_count: int):
         if not self.geometry.handle:
             return
@@ -137,6 +164,7 @@ class PieceScheduler:
         except Exception:
             pass
 
+        # Первые pieces — для начала воспроизведения
         for i in range(adaptive_count):
             p = first_piece + i
             if p >= self.geometry.num_pieces:
@@ -144,9 +172,8 @@ class PieceScheduler:
             deadline = self.DEADLINE_HEAD_MS + i * self.DEADLINE_STEP_MS
             self._set_high_priority(p, deadline)
 
-        # Tail (moov-атом в MKV/MP4) — но с большим deadline
-        for p in range(
-            max(0, self.geometry.num_pieces - 3),
-            self.geometry.num_pieces,
-        ):
+        # Tail (moov-атом MKV/MP4) — но с большим deadline
+        tail_count = getattr(config, "PIECE_SCHEDULER_TAIL_COUNT", 20)
+        tail_start = max(0, self.geometry.num_pieces - tail_count)
+        for p in range(tail_start, self.geometry.num_pieces):
             self._set_high_priority(p, self.TAIL_DEADLINE_MS)

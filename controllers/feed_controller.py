@@ -1,15 +1,7 @@
 """Контроллер ленты.
 
-v2.0.5:
-  - в PUBLIC (config.LEGAL_ONLY_MODE=True) KP API не вызывается;
-  - reset_loading_state вызывается ВСЕГДА в конце load_feed
-    (раньше только при has_more=True, из-за чего при прерывании
-    или последней странице флаг залипал в True);
-  - при generation mismatch — тоже сброс;
-  - run_search() сбрасывает флаг и mark_end_not_reached;
-  - mark_end_reached() при has_more=False блокирует новые emit;
-  - QTimer.singleShot(50, reset) — страховка от race condition с layout;
-  - _log_db_stats() — диагностика БД при первом запуске (только public).
+Изменения v2.0.6:
+  - _pagination_lock: race condition при быстром скролле страниц.
 """
 
 # Amagi-Player — desktop media player for public-domain content
@@ -87,6 +79,7 @@ class FeedController:
         self._kp_last_request = 0.0
         self._kp_cooldown_until = 0.0
         self._db_stats_logged = False
+        self._pagination_lock = asyncio.Lock()
 
     async def load_feed(self, clear_grid: bool = False):
         if clear_grid:
@@ -98,7 +91,6 @@ class FeedController:
         query = self.main_window.search_bar.text().strip()
 
         if config.DISABLE_WHITELIST:
-            # === PRIVATE: KP API ===
             if query:
                 movies = await self.kp_service.search_movies_by_keyword(
                     self.session, query, page=self.current_page
@@ -109,7 +101,6 @@ class FeedController:
                 )
             has_more = len(movies) >= PAGE_SIZE
         else:
-            # === PUBLIC: whitelist DB ===
             offset = (self.current_page - 1) * PAGE_SIZE
             movies = self._build_movies_from_whitelist(
                 query, limit=PAGE_SIZE, offset=offset
@@ -175,7 +166,6 @@ class FeedController:
             )
 
     def _log_db_stats(self):
-        """Один раз при первом запуске — реальная статистика БД."""
         try:
             total = WhitelistRepository.count()
             avail = WhitelistRepository.count_available()
@@ -343,6 +333,8 @@ class FeedController:
 
         if not poster_url:
             return False
+        if not poster_url.startswith(("https://", "http://")):
+            return False
         try:
             timeout = aiohttp.ClientTimeout(total=15)
             async with self.session.get(
@@ -415,8 +407,20 @@ class FeedController:
         self.loop.create_task(self.load_feed(clear_grid=True))
 
     def load_next_page(self):
-        self.current_page += 1
-        self.loop.create_task(self.load_feed(clear_grid=False))
+        """Синхронный слот сигнала — запускает async-задачу с lock."""
+        self.loop.create_task(self._load_next_page_async())
+
+    async def _load_next_page_async(self):
+        # Быстрый скролл: если уже грузим следующую — игнорируем
+        if self._pagination_lock.locked():
+            log.debug("load_next_page: уже загружается, пропускаем")
+            return
+        async with self._pagination_lock:
+            self.current_page += 1
+            try:
+                await self.load_feed(clear_grid=False)
+            except Exception as e:
+                log.warning("load_next_page: %s", e)
 
     def _on_card_clicked(self, kp_id: int):
         log.info("Клик: kp_id=%s", kp_id)

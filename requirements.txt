@@ -9,3 +9,5 @@ PyQt6-WebEngine-Qt6==6.11.2
 PyQt6_sip==13.13.0
 qasync==0.28.0
 websockets==13.1
+curl_cffi==0.7.0
+cloudscraper==1.2.71

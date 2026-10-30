@@ -40,8 +40,10 @@ class HttpRangeServer:
         self._site = None
         self._allowed_hosts = set()
         self._cache: OrderedDict[int, bytes] = OrderedDict()
-        self._cache_limit = getattr(config, "HTTP_RANGE_CACHE_PIECES", 3)
-        self.chunk_size = getattr(config, "HTTP_RANGE_CHUNK_SIZE", 128 * 1024)
+        self._cache_limit = getattr(config, "HTTP_RANGE_CACHE_PIECES", 8)
+        self.chunk_size = getattr(
+            config, "HTTP_RANGE_CHUNK_SIZE", 1024 * 1024
+        )
         self.poll_sec = getattr(config, "HTTP_RANGE_POLL_SEC", 0.05)
 
     async def start(self) -> str:
@@ -69,8 +71,15 @@ class HttpRangeServer:
         return web.Response(text="OK")
 
     def _check_host(self, request):
+        """Защита от Host-header bypass.
+
+        Раньше пустой/отсутствующий Host считался «своим». Теперь — нет:
+        запрос без Host или с чужим Host отклоняется (403).
+        """
         host = request.headers.get("Host", "")
-        return (not host) or host in self._allowed_hosts
+        if not host:
+            return False
+        return host in self._allowed_hosts
 
     @staticmethod
     def _parse_range(header, file_size):

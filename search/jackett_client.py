@@ -1,17 +1,13 @@
 """
 HTTP-клиент Jackett.
 
-Возможности:
-  - diagnose через t=indexers&configured=true (только настроенные)
-  - поиск: IMDb → EN/RU text (fallback)
-  - retry: только если первый запрос был медленный и пустой
-  - public mode: фильтрация результатов по LEGAL_JACKET_INDEXERS
-  - сохраняет raw XML для отладки
-
-Индексаторы настраиваются пользователем через UI Jackett:
-    http://127.0.0.1:9117/UI/Dashboard
-Список индексаторов хранится в data/JackettData/Indexers/*.json
-(эта папка в .gitignore).
+Изменения v2.0.6:
+  - _RETRY_DELAYS = [1.0, 2.0] (было [5, 10, 15] — 30с впустую)
+  - _REQUEST_TIMEOUT = 15.0 (было 25 — Jackett локальный)
+  - каскад IMDb + текст параллельно (было последовательно)
+  - diagnose: не кэшируем провал навсегда, retry через 60с
+  - _save_raw_xml за флагом config.JACKETT_DEBUG_SAVE_XML
+  - Semaphore(2) вместо 1
 """
 
 # Amagi-Player — desktop media player for public-domain content
@@ -46,9 +42,10 @@ from search.torznab_parser import parse_torznab_xml
 log = get_logger("jackett")
 
 _MOVIE_CATEGORIES = "2000,2010,2030,2040,2045,2050,2060"
-_REQUEST_TIMEOUT = 25.0
+_REQUEST_TIMEOUT = getattr(config, "JACKETT_REQUEST_TIMEOUT", 10.0)
 _RETRY_MIN_ELAPSED = 1.0
-_RETRY_DELAYS = [5.0, 10.0, 15.0]
+_RETRY_DELAYS = getattr(config, "JACKETT_RETRY_DELAYS", [0.5, 1.0])
+_DIAGNOSE_RETRY_DELAY = 60.0
 
 _DEBUG_DIR = config.DATA_DIR / "jackett_debug"
 try:
@@ -61,9 +58,10 @@ class JackettClient:
     def __init__(self, base_url: str = None, api_key: str = None):
         self.base_url = base_url or f"http://127.0.0.1:{config.JACKETT_PORT}"
         self._api_key_override = api_key
-        self._semaphore = asyncio.Semaphore(1)
+        self._semaphore = asyncio.Semaphore(2)
         self._diagnosed = False
         self._last_diagnose: dict = {}
+        self._diagnose_retry_ts = 0.0
         self._debug_counter = 0
 
     @property
@@ -79,15 +77,8 @@ class JackettClient:
     #  PUBLIC MODE FILTER
     # ==================================================================
     def _filter_by_mode(self, results: list[dict]) -> list[dict]:
-        """
-        В public режиме оставляем только результаты с легальными
-        индексаторами (config.LEGAL_JACKET_INDEXERS).
-
-        В private режиме возвращает всё как есть.
-        """
         if not results:
             return results
-
         if not getattr(config, "LEGAL_ONLY_MODE", False):
             return results
 
@@ -99,8 +90,6 @@ class JackettClient:
         for r in results:
             idx = (r.get("indexer") or "").lower()
             if not idx:
-                # Если indexer не определён — тоже отбрасываем в public.
-                # Иначе рискуем пропустить приватный трекер без метки.
                 continue
             if idx in legal:
                 filtered.append(r)
@@ -117,19 +106,23 @@ class JackettClient:
     #  DIAGNOSE
     # ==================================================================
     async def diagnose(self, session: aiohttp.ClientSession) -> dict:
+        now = time.time()
+
         if self._diagnosed:
             return self._last_diagnose
-
-        self._diagnosed = True
+        if now < self._diagnose_retry_ts:
+            return self._last_diagnose
 
         if not self.api_key:
             log.error("Jackett diagnose: API-ключ пуст")
+            self._diagnose_retry_ts = now + _DIAGNOSE_RETRY_DELAY
             return {}
 
         log.info("Jackett diagnose: t=indexers&configured=true")
         result = await self._diagnose_torznab(session, configured_only=True)
         if result and result.get("available", 0) > 0:
             self._last_diagnose = result
+            self._diagnosed = True
             return result
 
         log.info("Jackett diagnose: t=indexers (все)")
@@ -141,12 +134,19 @@ class JackettClient:
                 result.get("available", 0),
             )
             self._last_diagnose = result
+            self._diagnosed = True
             return result
 
-        log.warning("Jackett diagnose: ни один метод не сработал")
+        log.warning(
+            "Jackett diagnose: ни один метод не сработал "
+            "(следующая попытка через %.0fs)",
+            _DIAGNOSE_RETRY_DELAY,
+        )
         self._last_diagnose = {
             "available": -1, "ok": -1, "error": -1, "indexers": [],
         }
+        # НЕ ставим _diagnosed=True — попробуем снова, но с backoff.
+        self._diagnose_retry_ts = now + _DIAGNOSE_RETRY_DELAY
         return self._last_diagnose
 
     async def _diagnose_torznab(self, session, configured_only: bool) -> dict:
@@ -191,6 +191,8 @@ class JackettClient:
     #  DEBUG
     # ==================================================================
     def _save_raw_xml(self, xml: str, tag: str):
+        if not getattr(config, "JACKETT_DEBUG_SAVE_XML", False):
+            return
         try:
             self._debug_counter += 1
             ts = datetime.now().strftime("%H%M%S")
@@ -271,8 +273,6 @@ class JackettClient:
     async def _try_request(self, session, params, tag,
                            allow_retry: bool = True) -> list[dict]:
         results, elapsed, status = await self._get(session, params, tag)
-
-        # === Применяем фильтр public/private СРАЗУ после первого запроса ===
         results = self._filter_by_mode(results)
 
         if results:
@@ -310,7 +310,6 @@ class JackettClient:
     #  SEARCH
     # ==================================================================
     async def search_imdb(self, session, imdb_id) -> list[dict]:
-        # IMDb: без retry — если пусто, значит пусто.
         return await self._try_request(session, {
             "t": "movie",
             "cat": _MOVIE_CATEGORIES,
@@ -331,30 +330,44 @@ class JackettClient:
                          language="en") -> list[dict]:
         await self.diagnose(session)
 
+        tasks: list[asyncio.Task] = []
+
+        # IMDb-запрос и текстовый запрос — независимы, запускаем параллельно.
         if imdb_id and imdb_id.startswith("tt"):
-            results = await self.search_imdb(session, imdb_id)
-            if results:
-                log.info("Jackett: IMDb дал %d", len(results))
-                return results
+            tasks.append(asyncio.create_task(
+                self.search_imdb(session, imdb_id)
+            ))
 
         if language == "en":
             if title_en and title_en != "----":
                 q = f"{title_en} {year}".strip() if year else title_en
-                results = await self.search_text(session, q, "EN")
-                if results:
-                    log.info("Jackett: EN дал %d", len(results))
-                    return results
-            log.info("Jackett: EN-каскад пуст")
-            return []
-
-        if language == "ru":
+                tasks.append(asyncio.create_task(
+                    self.search_text(session, q, "EN")
+                ))
+        elif language == "ru":
             if title_ru:
                 q = f"{title_ru} {year}".strip() if year else title_ru
-                results = await self.search_text(session, q, "RU")
-                if results:
-                    log.info("Jackett: RU дал %d", len(results))
-                    return results
-            log.info("Jackett: RU-каскад пуст")
+                tasks.append(asyncio.create_task(
+                    self.search_text(session, q, "RU")
+                ))
+
+        if not tasks:
             return []
 
+        try:
+            results_list = await asyncio.gather(
+                *tasks, return_exceptions=True
+            )
+        except Exception as e:
+            log.warning("Jackett gather: %s", e)
+            return []
+
+        for r in results_list:
+            if isinstance(r, list) and r:
+                return r
+
+        if language == "en":
+            log.info("Jackett: EN-каскад пуст")
+        elif language == "ru":
+            log.info("Jackett: RU-каскад пуст")
         return []

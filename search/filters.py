@@ -48,14 +48,12 @@ _COLLECTION_MARKERS = frozenset({
     "quadrology", "квадрологи", "тетралоги", "пенталоги",
 })
 
-# Паттерны сборников: "1 4 Pack", "1-4", "1-3", "1 2 3", "4 in 1",
-# "2 movies collection", "pack of 3" и т.д.
 _COLLECTION_PATTERNS = (
     re.compile(r'\b\d\s*[-–]\s*\d\s*(pack|in\s*one|movies?|films?|collection)\b',
                re.IGNORECASE),
     re.compile(r'\b\d\s+\d\s+(pack|in\s*one|movies?|films?)\b',
                re.IGNORECASE),
-    re.compile(r'\b\d\s+\d\s+\d\s+\d\b', re.IGNORECASE),  # "1 2 3 4"
+    re.compile(r'\b\d\s+\d\s+\d\s+\d\b', re.IGNORECASE),
     re.compile(r'\b\d+\s*(movies?|films?)\s*(pack|collection|box|set)\b',
                re.IGNORECASE),
     re.compile(r'\b(pack|box|set)\s+of\s+\d+\b', re.IGNORECASE),
@@ -71,58 +69,59 @@ _MIN_SIZE_BYTES = 300 * 1024 * 1024
 _YEAR_RE = re.compile(r'\b(19\d{2}|20\d{2}|21\d{2})\b')
 
 
-# Негативные маркеры — то, что 100% НЕ фильм
-_NEGATIVE_MARKERS = frozenset({
-    # Игры
-    "игр", "game", "pc game", "ps4", "ps5", "xbox", "nintendo",
-    "steam", "repack game", "iso образ",
-    # Софт
-    "software", "программ", "windows", "photoshop", "office",
-    "adobe", "microsoft", "exe",
-    # Музыка
-    "mp3", "flac", "lossless", "album", "дискография",
-    "сборник песен", "music collection",
-    # Аудиокниги
-    "аудиокниг", "audiobook", "mp3 audiobook", "flac audiobook",
-    # Книги
-    "pdf", "epub", "fb2", "книга", "book",
-    # Обучение
-    "курс", "course", "уроки", "обучение", "tutorial",
-    # Мусор
-    "смотреть онлайн", "бесплатно", "онлайн кинотеатр",
-    "комикс", "comic",
+# ------------------------------------------------------------------
+# NEGATIVE MARKERS: регекс с \b, чтобы не резать "Игра" (1997),
+# "The Game", "The Book of Eli", "Windows" (в названии фильма) и т.п.
+#
+# Раньше: substring-match ("игр" в "игра" → false positive).
+# Теперь: конкретные фразы или слова с границами.
+# ------------------------------------------------------------------
+_NEGATIVE_REGEX = re.compile(
+    r'\b(?:'
+    r'pc\s+game|video\s+game|repack\s+game|'
+    r'ps[45]|xbox|nintendo(?:\s+switch)?|steam(?:\s+key)?|'
+    r'software|photoshop|adobe|microsoft\s+office|'
+    r'аудиокниг|audiobook|mp3\s+audiobook|flac\s+audiobook|'
+    r'music\s+collection|сборник\s+песен|'
+    r'смотреть\s+онлайн|онлайн\s+кинотеатр|'
+    r'видеоигр|'
+    r'комикс'
+    r')\b',
+    re.IGNORECASE,
+)
+
+# Слова, которые не встречаются в названиях фильмов как отдельные токены
+_NEGATIVE_SIMPLE = frozenset({
+    "mp3", "flac", "lossless", "pdf", "epub", "fb2", "tutorial",
 })
 
 
 def is_safe_release(title: str, size: int = 0) -> bool:
     """
-    Либиральный фильтр на уровне aggregator.
+    Либеральный фильтр на уровне aggregator.
 
     Строгая проверка "это видео?" происходит в StreamSession._pick_video_file,
     где уже есть метадата (список файлов с расширениями).
 
-    Здесь мы отбрасываем только 100%-й мусор:
-      - игры, софт, музыка, аудиокниги, книги
-      - фейковые "смотреть онлайн"
-      - файлы < 300 MB (если размер известен)
+    Здесь мы отбрасываем только 100%-й мусор.
     """
     if not title:
         return False
 
     low = title.lower()
 
-    # Явный мусор — отбросить сразу
-    if any(m in low for m in _NEGATIVE_MARKERS):
+    if _NEGATIVE_REGEX.search(low):
         return False
 
-    # Если размер известен и < 300 MB — это не фильм
+    if any(m in low for m in _NEGATIVE_SIMPLE):
+        return False
+
     if size and size < 300 * 1024 * 1024:
         return False
 
-    # Всё остальное — пропускаем.
-    # Если это магнет без metadata (size=0) — StreamSession сам
-    # отбросит после получения списка файлов, если внутри нет видео.
     return True
+
+
 def has_russian_marker(title: str) -> bool:
     if not title:
         return False
@@ -131,12 +130,6 @@ def has_russian_marker(title: str) -> bool:
 
 
 def _is_collection(title: str) -> bool:
-    """
-    Определяет сборники/трилогии/квадрологии.
-    Покрывает:
-      - маркеры: trilogy, collection, complete, boxset, трилоги, etc.
-      - паттерны: "1 4 Pack", "1-4", "1 2 3 4", "4 movies collection", etc.
-    """
     if not title:
         return False
     low = title.lower()
@@ -229,7 +222,6 @@ def process_and_rank(releases: list[dict], query: str,
             rejected_by_matches += 1
             continue
 
-        # Коллекции reject'им ДО проверки года
         if query_year and reject_collections and _is_collection(title):
             if rejected_by_collection < 5:
                 log.info("[rank] reject collection: '%s'", title[:70])
@@ -273,7 +265,6 @@ def process_and_rank(releases: list[dict], query: str,
     return [r for _, r in scored[:max_results]]
 
 
-# Public aliases
 extract_year = _extract_year
 year_close = _year_close
 is_collection = _is_collection

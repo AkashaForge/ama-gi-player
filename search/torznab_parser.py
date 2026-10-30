@@ -17,7 +17,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import re
-from xml.etree import ElementTree
+from defusedxml import ElementTree
 
 from search.filters import is_safe_release
 

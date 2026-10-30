@@ -1,4 +1,9 @@
-"""Геометрия пиесов."""
+"""Геометрия пиесов.
+
+Изменения v2.0.6:
+  - piece_for_byte — арифметика вместо handle.torrent_file().map_file()
+    (map_file дёргает C++ на каждый вызов из hot path HTTP Range).
+"""
 
 # Amagi-Player — desktop media player for public-domain content
 # Copyright (C) 2026 AkashaForge
@@ -43,14 +48,21 @@ class PieceGeometry:
         self.current_piece = -1
 
     def piece_for_byte(self, byte_pos: int) -> int:
-        if not self.handle:
+        """Арифметика: (file_offset + byte_pos) // piece_length.
+
+        Раньше вызывался handle.torrent_file().map_file(...) — это C++-вызов
+        на каждый запрос из HTTP Range hot path. Формула эквивалентна,
+        но без перехода через питон-биндинги.
+        """
+        if not self.handle or self.piece_length <= 0:
             return -1
-        try:
-            return self.handle.torrent_file().map_file(
-                self.file_idx, byte_pos, 1
-            ).piece
-        except Exception:
+        absolute_byte = self.file_offset_in_torrent + byte_pos
+        if absolute_byte < 0:
             return -1
+        piece = absolute_byte // self.piece_length
+        if piece < 0 or piece >= self.num_pieces:
+            return -1
+        return piece
 
     def byte_range_for_piece(self, piece: int) -> tuple[int, int]:
         piece_start_in_torrent = piece * self.piece_length

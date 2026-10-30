@@ -1,30 +1,11 @@
-"""Клиент YTS-совместимого API.
+"""Клиент YTS с несколькими зеркалами и retry.
 
-По умолчанию отключён. Активируется только если:
-  1. файл data/yts_api_base.txt содержит непустой URL (без строк-комментариев),
-  2. config.YTS_ENABLED = True (по умолчанию False).
-
-Файл data/yts_api_base.txt — личный, в git не коммитится (в .gitignore).
-Шаблон лежит в data/yts_api_base.example.txt.
-
-Код не содержит ссылок на сторонние ресурсы — URL задаёт пользователь.
+v2.0.21:
+  - НЕТ фатального _dns_failed
+  - Перебор зеркал из config.YTS_BASE_URLS при ошибке
+  - Retry с задержкой
 """
-
-# Amagi-Player — desktop media player for public-domain content
-# Copyright (C) 2026 AkashaForge
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+import asyncio
 
 import aiohttp
 
@@ -34,47 +15,65 @@ from core.logging_setup import get_logger
 log = get_logger("yts")
 
 
-def _load_base_url() -> str:
-    """Читает URL из data/yts_api_base.txt, игнорируя комментарии и пустые строки."""
-    path = config.DATA_DIR / "yts_api_base.txt"
-    if not path.exists():
-        return ""
-    try:
-        for raw in path.read_text(encoding="utf-8").splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            return line
-    except Exception as e:
-        log.warning("yts_api_base.txt: %s", e)
-    return ""
-
-
 class YTSClient:
     def __init__(self):
-        self.base_url = _load_base_url()
+        self.base_urls = list(getattr(config, "YTS_BASE_URLS", ()))
         self.enabled = (
-            bool(self.base_url)
+            bool(self.base_urls)
             and getattr(config, "YTS_ENABLED", False)
         )
         self.max_results = getattr(config, "YTS_MAX_RESULTS", 20)
+        self.timeout = getattr(config, "YTS_REQUEST_TIMEOUT", 10.0)
+        self.max_retries = getattr(config, "YTS_MAX_RETRIES", 2)
+        self.retry_delay = getattr(config, "YTS_RETRY_DELAY", 2.0)
 
-        if not self.base_url:
-            log.info("YTS: отключён (data/yts_api_base.txt пуст или отсутствует)")
+        if not self.base_urls:
+            log.info("YTS: отключён (нет зеркал в config.YTS_BASE_URLS)")
         elif not self.enabled:
             log.info("YTS: отключён (YTS_ENABLED=False)")
         else:
-            log.info("YTS: включён, base_url=%s", self.base_url)
+            log.info("YTS: включён, зеркал=%d", len(self.base_urls))
 
     def is_enabled(self) -> bool:
         return self.enabled
 
-    async def search(self, session: aiohttp.ClientSession, query: str,
-                     year: str = "") -> list[dict]:
+    async def search(self, session: aiohttp.ClientSession,
+                     query: str, year: str = "") -> list[dict]:
         if not self.enabled:
             return []
 
-        url = f"{self.base_url}/list_movies.json"
+        last_error = None
+        for base_url in self.base_urls:
+            for attempt in range(1, self.max_retries + 1):
+                try:
+                    results = await self._search_one(
+                        session, base_url, query, year
+                    )
+                    if results:
+                        log.info("YTS [%s]: %d результатов",
+                                 base_url, len(results))
+                        return results
+                    # Пустой ответ — не ошибка, пробуем следующее зеркало
+                    log.debug("YTS [%s]: пусто", base_url)
+                    break
+                except asyncio.TimeoutError:
+                    last_error = f"timeout ({base_url})"
+                    log.warning("YTS [%s] attempt %d: timeout",
+                                base_url, attempt)
+                except Exception as e:
+                    last_error = f"{type(e).__name__}: {e} ({base_url})"
+                    log.warning("YTS [%s] attempt %d: %s",
+                                base_url, attempt, e)
+
+                if attempt < self.max_retries:
+                    await asyncio.sleep(self.retry_delay)
+
+        log.warning("YTS: все зеркала недоступны (%s)", last_error)
+        return []
+
+    async def _search_one(self, session, base_url: str,
+                          query: str, year: str) -> list[dict]:
+        url = f"{base_url}/list_movies.json"
         params = {
             "query_term": query,
             "sort_by": "seeds",
@@ -83,16 +82,13 @@ class YTSClient:
         if year:
             params["year"] = year
 
-        try:
-            timeout = aiohttp.ClientTimeout(total=15)
-            async with session.get(url, params=params, timeout=timeout) as resp:
-                if resp.status != 200:
-                    log.warning("YTS HTTP %d", resp.status)
-                    return []
-                data = await resp.json()
-        except Exception as e:
-            log.warning("YTS request: %s", e)
-            return []
+        timeout = aiohttp.ClientTimeout(total=self.timeout)
+        async with session.get(url, params=params,
+                               timeout=timeout) as resp:
+            if resp.status != 200:
+                log.warning("YTS [%s] HTTP %d", base_url, resp.status)
+                return []
+            data = await resp.json()
 
         movies = (data.get("data") or {}).get("movies") or []
         results = []
@@ -105,24 +101,20 @@ class YTSClient:
                 quality = torrent.get("quality", "?")
                 size = int(torrent.get("size_bytes") or 0)
                 seeders = int(torrent.get("seeds") or 0)
+                peers = int(torrent.get("peers") or 0)
                 results.append({
                     "type": "magnet",
                     "url": magnet,
                     "title": f"{title} [{quality}]",
                     "seeders": seeders,
+                    "leechers": peers,
                     "size": size,
                     "indexer": "yts",
                 })
-        log.info("YTS: %d результатов для '%s'", len(results), query)
         return results
 
     @staticmethod
     def _magnet_from_hash(info_hash: str) -> str:
-        """Собирает magnet-ссылку из хеша, который отдаёт API.
-
-        Трекеры — универсальные публичные DHT-bootstrap,
-        не привязаны к конкретному ресурсу.
-        """
         if not info_hash:
             return ""
         trackers = (

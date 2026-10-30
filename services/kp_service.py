@@ -90,7 +90,7 @@ class KPService:
         return os.path.join(self.CACHE_FULL, f"{kp_id}.json")
 
     def _list_path(self, key: str) -> str:
-        h = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+        h = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
         return os.path.join(self.CACHE_LISTS, f"{h}.json")
 
     @staticmethod

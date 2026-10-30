@@ -142,7 +142,7 @@ class TorrentManager:
             key = str(data.get("APIKey", "")).strip()
             if key:
                 log.info("ServerConfig.json: %s", path)
-                log.info("APIKey: %s... (len=%d)", key[:8], len(key))
+                log.info("APIKey: *** (len=%d)", len(key))
             return key
         except Exception as e:
             log.warning("ServerConfig.json (%s): %s", path, e)

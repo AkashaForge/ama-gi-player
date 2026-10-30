@@ -7,14 +7,6 @@
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import sys
 
@@ -49,8 +41,13 @@ from services.process_cleaner import cleanup_all, kill_nodriver_profiles
 setup_logging()
 log = get_logger("main")
 
+# Защита от двойного shutdown
+_shutdown_started = False
+_shutdown_done = False
+
 
 def _atexit_cleanup():
+    """Финальная очистка процессов. Безопасна при повторном вызове."""
     try:
         cleanup_all()
         kill_nodriver_profiles()
@@ -93,28 +90,61 @@ if __name__ == "__main__":
     orchestrator = AmagiApplicationOrchestrator(loop)
     orchestrator.start_orchestration()
 
-    # --- ОБНОВЛЕНИЕ: Перехват закрытия окна ---
-    # Как только пользователь закрывает последнее окно интерфейса,
-    # срабатывает этот лямбда-вызов: запускается очистка и прерывается цикл run_forever()
-    app.lastWindowClosed.connect(lambda: [
-        log.info("Окно закрыто пользователем. Запуск очистки процессов..."),
-        _atexit_cleanup(),
-        loop.stop()
-    ])
-    # ------------------------------------------
+    async def _graceful_shutdown(reason: str):
+        """Единственный путь завершения. Выполняется ровно один раз."""
+        global _shutdown_started, _shutdown_done
+        if _shutdown_started:
+            log.debug("shutdown already started (reason: %s), skip", reason)
+            return
+        _shutdown_started = True
+
+        log.info("Начинаю graceful shutdown (%s)...", reason)
+
+        try:
+            await orchestrator.shutdown_async()
+        except Exception as e:
+            log.warning("shutdown_async: %s", e)
+
+        try:
+            _atexit_cleanup()
+        except Exception:
+            pass
+
+        _shutdown_done = True
+        log.info("Shutdown завершён (%s)", reason)
+
+    def _on_last_window_closed():
+        log.info("Окно закрыто пользователем")
+
+        async def _run():
+            await _graceful_shutdown("window closed")
+            try:
+                loop.stop()
+            except Exception:
+                pass
+
+        asyncio.ensure_future(_run(), loop=loop)
+
+    app.lastWindowClosed.connect(_on_last_window_closed)
 
     try:
         loop.run_forever()
     except KeyboardInterrupt:
         log.info("KeyboardInterrupt")
-    finally:
+
+    # Гарантированный shutdown, если его не сделал _on_last_window_closed
+    if not _shutdown_done:
         try:
-            loop.run_until_complete(orchestrator.shutdown_async())
+            loop.run_until_complete(_graceful_shutdown("finally"))
         except Exception as e:
-            log.warning("shutdown_async: %s", e)
-        try:
-            loop.close()
-        except Exception:
-            pass
-        _atexit_cleanup()
-        log.info("Выход")
+            log.warning("shutdown (finally): %s", e)
+    else:
+        log.debug("shutdown уже выполнен в _on_last_window_closed")
+
+    try:
+        loop.close()
+    except Exception:
+        pass
+
+    _atexit_cleanup()
+    log.info("Выход")

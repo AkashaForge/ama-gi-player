@@ -13,15 +13,9 @@ v2.1.0:
   - приоритет описания: RU из KP → EN из IA
   - не трогает whitelist.db (working copy), только seed
 
-Использование:
-  python tools/enrich_whitelist.py --allow-kp --force --force-posters
-  python tools/enrich_whitelist.py --allow-kp --force --force-posters \\
-      --delay 3.0 --pause-every 20 --pause-secs 40
-  python tools/enrich_whitelist.py --dry-run
-
-После завершения:
-  python tools/apply_seed.py
-  python main.py
+v2.1.1:
+  - убраны SQL f-string (B608): статические запросы вместо конкатенации
+  - migrate_schema: whitelist колонок + nosec (SQLite не поддерживает ?)
 """
 
 # Amagi-Player — desktop media player for public-domain content
@@ -43,7 +37,6 @@ v2.1.0:
 import argparse
 import asyncio
 import html as html_lib
-import os
 import re
 import sqlite3
 import sys
@@ -78,6 +71,15 @@ _NEW_COLUMNS = [
     ("poster_source",  "TEXT DEFAULT ''"),
     ("enriched",       "INTEGER DEFAULT 0"),
 ]
+
+# Whitelist для ALTER TABLE. SQLite не поддерживает параметризацию
+# имён колонок в ALTER — только явное перечисление допустимых.
+_ALLOWED_ALTER = {
+    "description":    "TEXT DEFAULT ''",
+    "description_ru": "TEXT DEFAULT ''",
+    "poster_source":  "TEXT DEFAULT ''",
+    "enriched":       "INTEGER DEFAULT 0",
+}
 
 
 # ======================================================================
@@ -114,14 +116,19 @@ def migrate_schema():
         existing = {row["name"] for row in cur.fetchall()}
         added = []
         for col, decl in _NEW_COLUMNS:
-            if col not in existing:
-                try:
-                    conn.execute(
-                        f"ALTER TABLE movie_whitelist ADD COLUMN {col} {decl};"
-                    )
-                    added.append(col)
-                except Exception as e:
-                    log.warning("ALTER %s: %s", col, e)
+            if col in existing:
+                continue
+            if col not in _ALLOWED_ALTER:
+                log.warning("Пропущено неизвестное имя колонки: %s", col)
+                continue
+            try:
+                # col и decl — из _ALLOWED_ALTER (константы), SQLi невозможна
+                conn.execute(  # nosec B608
+                    f"ALTER TABLE movie_whitelist ADD COLUMN {col} {decl};"
+                )
+                added.append(col)
+            except Exception as e:
+                log.warning("ALTER %s: %s", col, e)
         conn.commit()
         if added:
             log.info("Миграция: добавлены колонки %s", ", ".join(added))
@@ -132,15 +139,29 @@ def migrate_schema():
 
 
 def read_rows(force: bool) -> list[dict]:
+    """Читает строки для обогащения.
+
+    Два статических SQL вместо f-string: force → всё, иначе → только
+    те, что ещё не обогащены.
+    """
+    if force:
+        sql = (
+            "SELECT kp_id, title_ru, title_en, year, archive_identifier, "
+            "description, description_ru, poster_source, enriched "
+            "FROM movie_whitelist ORDER BY kp_id DESC;"
+        )
+    else:
+        sql = (
+            "SELECT kp_id, title_ru, title_en, year, archive_identifier, "
+            "description, description_ru, poster_source, enriched "
+            "FROM movie_whitelist "
+            "WHERE (enriched IS NULL OR enriched = 0) "
+            "ORDER BY kp_id DESC;"
+        )
     conn = sqlite3.connect(str(SEED_DB))
     conn.row_factory = sqlite3.Row
     try:
-        where = "" if force else "WHERE (enriched IS NULL OR enriched = 0)"
-        cur = conn.execute(
-            f"SELECT kp_id, title_ru, title_en, year, archive_identifier, "
-            f"description, description_ru, poster_source, enriched "
-            f"FROM movie_whitelist {where} ORDER BY kp_id DESC;"
-        )
+        cur = conn.execute(sql)
         return [dict(r) for r in cur.fetchall()]
     finally:
         conn.close()
@@ -148,28 +169,42 @@ def read_rows(force: bool) -> list[dict]:
 
 def update_row(kp_id: int, description=None, description_ru=None,
                poster_source=None, enriched=1):
-    fields, params = [], []
-    if description is not None:
-        fields.append("description = ?")
-        params.append(description)
-    if description_ru is not None:
-        fields.append("description_ru = ?")
-        params.append(description_ru)
-    if poster_source is not None:
-        fields.append("poster_source = ?")
-        params.append(poster_source)
-    if enriched is not None:
-        fields.append("enriched = ?")
-        params.append(enriched)
-    if not fields:
+    """Обновляет поля одной транзакцией.
+
+    Статические SQL для каждого поля — никаких f-string и dynamic
+    column names. Поля-кандидаты жёстко перечислены в коде, поэтому
+    SQL-инъекция технически невозможна.
+    """
+    if (description is None and description_ru is None
+            and poster_source is None and enriched is None):
         return
-    params.append(kp_id)
+
     conn = sqlite3.connect(str(SEED_DB))
     try:
-        conn.execute(
-            f"UPDATE movie_whitelist SET {', '.join(fields)} WHERE kp_id = ?",
-            params,
-        )
+        if description is not None:
+            conn.execute(
+                "UPDATE movie_whitelist "
+                "SET description = ? WHERE kp_id = ?;",
+                (description, kp_id),
+            )
+        if description_ru is not None:
+            conn.execute(
+                "UPDATE movie_whitelist "
+                "SET description_ru = ? WHERE kp_id = ?;",
+                (description_ru, kp_id),
+            )
+        if poster_source is not None:
+            conn.execute(
+                "UPDATE movie_whitelist "
+                "SET poster_source = ? WHERE kp_id = ?;",
+                (poster_source, kp_id),
+            )
+        if enriched is not None:
+            conn.execute(
+                "UPDATE movie_whitelist "
+                "SET enriched = ? WHERE kp_id = ?;",
+                (enriched, kp_id),
+            )
         conn.commit()
     finally:
         conn.close()
@@ -241,12 +276,18 @@ def _pick_best_poster(files: list) -> str | None:
         if size < MIN_FILE_POSTER_BYTES:
             continue
         score = 0
-        if "poster" in name: score += 100
-        if "cover" in name: score += 90
-        if "box" in name or "front" in name: score += 80
-        if "thumb" in name: score += 30
-        if "screenshot" in name or "sample" in name: score -= 200
-        if "frame" in name or "still" in name: score -= 150
+        if "poster" in name:
+            score += 100
+        if "cover" in name:
+            score += 90
+        if "box" in name or "front" in name:
+            score += 80
+        if "thumb" in name:
+            score += 30
+        if "screenshot" in name or "sample" in name:
+            score -= 200
+        if "frame" in name or "still" in name:
+            score -= 150
         candidates.append((score, size, f["name"]))
         all_large.append((size, f["name"]))
     if candidates:

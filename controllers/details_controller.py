@@ -1,15 +1,9 @@
 """Контроллер карточки фильма.
 
-v2.0.5:
-  - в PUBLIC (config.LEGAL_ONLY_MODE=True) KP API НЕ вызывается;
-  - описание: из whitelist DB (если поле есть), иначе из
-    archive.org/metadata (асинхронно);
-  - обложка: seed → IA (archive_identifier) → IA search → KP (только private);
-  - _MAX_DESCRIPTION_LEN = 500 (виджет обрежет до 450 для отображения);
-  - resume island скрывается при открытии карточки и возвращается
-    при возврате в ленту;
-  - _apply_cover_to_ui использует update_cover() — точечно,
-    не перерисовывает всю карточку.
+v2.0.6:
+  - Lucene-эскейпинг в _search_archive_identifier (было — только `"`);
+  - проверка схемы poster_url (_try_kp_cover);
+  - остальное как в v2.0.5.
 """
 
 # Amagi-Player — desktop media player for public-domain content
@@ -49,6 +43,15 @@ _WHITELIST_DESC_FIELDS = (
     "description_ru",
     "description",
 )
+
+# Lucene escape (то же, что в archive_org_searcher)
+_LUCENE_SPECIAL_RE = re.compile(r'([+\-&|!(){}\[\]^"~*?:\\/])')
+
+
+def _escape_lucene(s: str) -> str:
+    if not s:
+        return ""
+    return _LUCENE_SPECIAL_RE.sub(r'\\\1', s)
 
 
 def _is_cyrillic_dominant(text: str) -> bool:
@@ -101,17 +104,12 @@ class DetailsController:
         return bool(getattr(config, "LEGAL_ONLY_MODE", True))
 
     def _kp_enabled(self) -> bool:
-        """KP используется ТОЛЬКО в private."""
         return not self._is_public()
 
-    # ------------------------------------------------------------------
-    #  Открытие карточки
-    # ------------------------------------------------------------------
     def open(self, kp_id: int):
         self.loop.create_task(self._open_details_page(kp_id))
 
     async def _open_details_page(self, kp_id: int):
-        # Скрываем "Продолжить просмотр", чтобы не перекрывал кнопку
         if hasattr(self.main_window, "resume_island"):
             self.main_window.resume_island.hide()
 
@@ -197,9 +195,6 @@ class DetailsController:
                 return str(val).strip()
         return ""
 
-    # ------------------------------------------------------------------
-    #  Описание (IA)
-    # ------------------------------------------------------------------
     async def _load_description_for_details(
         self, kp_id: int, title_en: str, title_ru: str, year: str
     ):
@@ -249,9 +244,6 @@ class DetailsController:
         except Exception as e:
             log.debug("apply_description_to_ui: %s", e)
 
-    # ------------------------------------------------------------------
-    #  Обложка
-    # ------------------------------------------------------------------
     async def _load_cover_for_details(
         self, kp_id: int, title_en: str, title_ru: str, year: str
     ):
@@ -302,7 +294,9 @@ class DetailsController:
         query = (title or "").strip()
         if not query:
             return None
-        safe = query.replace('"', '\\"')
+
+        safe = _escape_lucene(query)
+
         if year and str(year).isdigit():
             q = (
                 f'title:("{safe}") AND '
@@ -419,6 +413,10 @@ class DetailsController:
 
         if not poster_url:
             return False
+        # Проверка схемы: не даём скачивать произвольные протоколы
+        if not poster_url.startswith(("https://", "http://")):
+            log.warning("KP poster: bad scheme %r", poster_url[:40])
+            return False
 
         try:
             timeout = aiohttp.ClientTimeout(total=15)
@@ -465,9 +463,6 @@ class DetailsController:
             return []
         return data.get("films") or []
 
-    # ------------------------------------------------------------------
-    #  Lazy resolve — только private
-    # ------------------------------------------------------------------
     async def _lazy_resolve(self, old_kp_id: int):
         row = WhitelistRepository.get_movie(old_kp_id)
         if not row:
@@ -524,9 +519,6 @@ class DetailsController:
             except Exception as e:
                 log.warning("Lazy resolve update: %s", e)
 
-    # ------------------------------------------------------------------
-    #  Навигация
-    # ------------------------------------------------------------------
     def handle_back_to_feed(self):
         self.main_window.screen_stack.setCurrentIndex(0)
         self.check_resume_island()

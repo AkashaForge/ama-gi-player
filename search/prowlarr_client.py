@@ -1,4 +1,7 @@
-"""Клиент Prowlarr (native JSON API)."""
+"""Клиент Prowlarr (native JSON API).
+
+Изменение v2.0.6: Semaphore(2) вместо 1 (было — сериализовало все запросы).
+"""
 
 # Amagi-Player — desktop media player for public-domain content
 # Copyright (C) 2026 AkashaForge
@@ -33,7 +36,7 @@ class ProwlarrClient:
     def __init__(self, base_url: str = None, api_key: str = None):
         self.base_url = base_url or f"http://127.0.0.1:{config.PROWLARR_PORT}"
         self._api_key_override = api_key
-        self._semaphore = asyncio.Semaphore(1)
+        self._semaphore = asyncio.Semaphore(2)
         self._diagnosed = False
         self._indexers: list[dict] = []
 
