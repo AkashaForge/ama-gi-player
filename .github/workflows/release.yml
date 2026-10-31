@@ -60,7 +60,7 @@ jobs:
           pip show PyQt6 PyQt6-Qt6 PyQt6-WebEngine PyQt6-WebEngine-Qt6 PyQt6_sip |
             Select-String -Pattern "^(Name|Version):" | Format-Table -AutoSize
 
-          Write-Host "`n== Verify all third-party imports ==" -ForegroundColor Cyan
+          Write-Host "`n== Verify system-Python imports (sanity) ==" -ForegroundColor Cyan
           python -c "import PyQt6.QtWidgets; print('PyQt6.QtWidgets OK')"
           python -c "import PyQt6.QtMultimedia; print('PyQt6.QtMultimedia OK')"
           python -c "import PyQt6.QtMultimediaWidgets; print('PyQt6.QtMultimediaWidgets OK')"
@@ -71,6 +71,8 @@ jobs:
           python -c "import cloudscraper; print('cloudscraper OK')"
           python -c "import curl_cffi.requests; print('curl_cffi OK')"
           python -c "import defusedxml; print('defusedxml OK')"
+          python -c "from defusedxml import ElementTree; print('defusedxml.ElementTree OK')"
+          python -c "from defusedxml.ElementTree import fromstring; print('defusedxml.ElementTree.fromstring OK')"
           python -c "import libtorrent; print('libtorrent OK')"
           python -c "import nodriver; print('nodriver OK')"
           python -c "import psutil; print('psutil OK')"
@@ -134,7 +136,7 @@ jobs:
           & python -c "import sqlite3; c=sqlite3.connect('data/whitelist.db'); c.execute('UPDATE movie_whitelist SET available=1 WHERE available IS NULL'); c.commit(); c.close()"
           Write-Host "[OK] data/whitelist.db prepared"
 
-      - name: Build with Nuitka (standalone)
+      - name: Build with Nuitka (standalone, exhaustive includes)
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -144,9 +146,12 @@ jobs:
           $nuitkaArgs = @(
             "--standalone"
 
+            # ============================================================
+            # PyQt6 — plugin + all used submodules
+            # ============================================================
             "--enable-plugin=pyqt6"
             "--include-package=PyQt6"
-
+            "--include-package-data=PyQt6"
             "--include-module=PyQt6.QtCore"
             "--include-module=PyQt6.QtGui"
             "--include-module=PyQt6.QtWidgets"
@@ -157,21 +162,96 @@ jobs:
             "--include-module=PyQt6.QtWebEngineWidgets"
             "--include-module=PyQt6.QtWebChannel"
 
+            # Qt native plugins (multimedia/ffmpeg, platform, imageformats)
             "--include-qt-plugins=multimedia,platforms,imageformats,iconengines,styles,tls"
 
-            "--include-package=aiohttp"
-            "--include-package=cloudscraper"
-            "--include-package=curl_cffi"
+            # ============================================================
+            # defusedxml — aggressive: force-follow ALL submodules
+            # (torznab_parser.py uses from defusedxml.ElementTree import ...)
+            # ============================================================
             "--include-package=defusedxml"
-            "--include-package=libtorrent"
-            "--include-package=nodriver"
-            "--include-package=psutil"
-            "--include-package=qasync"
-            "--include-package=websockets"
+            "--include-package-data=defusedxml"
+            "--follow-import-to=defusedxml"
+            "--include-module=defusedxml"
+            "--include-module=defusedxml.common"
+            "--include-module=defusedxml.ElementTree"
+            "--include-module=defusedxml.cElementTree"
+            "--include-module=defusedxml.expatbuilder"
+            "--include-module=defusedxml.expatreader"
+            "--include-module=defusedxml.lxml"
+            "--include-module=defusedxml.minidom"
+            "--include-module=defusedxml.pulldom"
+            "--include-module=defusedxml.sax"
+            "--include-module=defusedxml.xmlrpc"
 
+            # ============================================================
+            # aiohttp — pure-Python + data (has SSL cert bundles etc.)
+            # ============================================================
+            "--include-package=aiohttp"
+            "--include-package-data=aiohttp"
+            "--follow-import-to=aiohttp"
+
+            # ============================================================
+            # cloudscraper — pure-Python
+            # ============================================================
+            "--include-package=cloudscraper"
+            "--include-package-data=cloudscraper"
+            "--follow-import-to=cloudscraper"
+
+            # ============================================================
+            # curl_cffi — C-extension + data (cacert.pem, libcurl DLLs)
+            # ============================================================
+            "--include-package=curl_cffi"
+            "--include-package-data=curl_cffi"
+            "--include-module=curl_cffi"
+            "--include-module=curl_cffi.requests"
+            "--include-module=curl_cffi._wrapper"
+            "--include-data-dir=../"  # no-op, безопасная заглушка; реальные data — через --include-package-data
+
+            # ============================================================
+            # libtorrent — C-extension
+            # ============================================================
+            "--include-package=libtorrent"
+            "--include-package-data=libtorrent"
+            "--include-module=libtorrent"
+
+            # ============================================================
+            # nodriver — pure-Python + data (CDP js files)
+            # ============================================================
+            "--include-package=nodriver"
+            "--include-package-data=nodriver"
+            "--follow-import-to=nodriver"
+
+            # ============================================================
+            # psutil — C-extension (has _psutil_windows.pyd)
+            # ============================================================
+            "--include-package=psutil"
+            "--include-package-data=psutil"
+            "--include-module=psutil"
+
+            # ============================================================
+            # qasync — pure-Python + C-extension _qt
+            # ============================================================
+            "--include-package=qasync"
+            "--include-package-data=qasync"
+            "--include-module=qasync._qt"
+
+            # ============================================================
+            # websockets — pure-Python + optional C speedups
+            # ============================================================
+            "--include-package=websockets"
+            "--include-package-data=websockets"
+            "--follow-import-to=websockets"
+
+            # ============================================================
+            # Project data
+            # ============================================================
             "--include-data-dir=data=data"
             "--include-data-dir=ui=ui"
 
+            # ============================================================
+            # EXE metadata
+            # ============================================================
             "--windows-console-mode=force"
             "--windows-icon-from-ico=assets/icon.ico"
             "--output-dir=dist"
@@ -194,7 +274,7 @@ jobs:
           python -m nuitka @nuitkaArgs
           if ($LASTEXITCODE -ne 0) { throw "nuitka failed" }
 
-      - name: Verify build (hard checks)
+      - name: Verify build (files present)
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -214,10 +294,7 @@ jobs:
           if (-not (Test-Path (Join-Path $d "ui\styles.qss")))          { throw "ui/styles.qss missing" }
           Write-Host "[OK] data + ui files present" -ForegroundColor Green
 
-          # C-extension packages must exist as .pyd or directory
-          # (pure-Python packages like defusedxml/aiohttp/qasync/websockets/
-          #  cloudscraper/nodriver/psutil are compiled INTO the exe by Nuitka
-          #  and do NOT create separate directories in .dist)
+          # C-extensions MUST exist as .pyd or directory
           foreach ($mod in @("libtorrent","curl_cffi")) {
             $pyd = Get-ChildItem $d -Recurse -Filter "$mod*.pyd" -ErrorAction SilentlyContinue | Select-Object -First 1
             if (-not $pyd) {
@@ -225,7 +302,7 @@ jobs:
               if (-not $dir) { throw "C-extension package '$mod' not found in .dist" }
             }
           }
-          Write-Host "[OK] C-extension packages (libtorrent, curl_cffi) present in .dist" -ForegroundColor Green
+          Write-Host "[OK] C-extensions present (libtorrent, curl_cffi)" -ForegroundColor Green
 
           # Qt WebEngine core DLL
           if (-not (Get-ChildItem $d -Recurse -Filter "Qt6WebEngineCore.dll" -ErrorAction SilentlyContinue)) {
