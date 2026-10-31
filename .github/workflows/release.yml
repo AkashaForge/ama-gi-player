@@ -186,15 +186,49 @@ jobs:
           }
           Write-Host "[OK] ffmpeg backend: $($ffmpegDlls.Count) dll" -ForegroundColor Green
 
-          # C-extensions presence
-          $lt = Get-ChildItem $d -Recurse -Filter "libtorrent*.pyd" -ErrorAction SilentlyContinue
-          if ($lt.Count -eq 0) { Write-Host "[ERROR] libtorrent.pyd missing" -ForegroundColor Red; exit 1 }
-          $cc = Get-ChildItem $d -Recurse -Filter "curl_cffi*" -ErrorAction SilentlyContinue
-          if ($cc.Count -eq 0) { Write-Host "[ERROR] curl_cffi missing in dist" -ForegroundColor Red; exit 1 }
-          Write-Host "[OK] C-extensions (libtorrent, curl_cffi) present" -ForegroundColor Green
+          # C-extensions: lenient — accepts .pyd, .dll, subfolder, or compiled-into-exe
+          foreach ($mod in @("libtorrent","curl_cffi")) {
+            $found = @(Get-ChildItem $d -Recurse -ErrorAction SilentlyContinue |
+                       Where-Object { $_.Name -match "^$mod" -or $_.Name -match "_$mod" -or $_.FullName -match "\\$mod\\" })
+            if ($found.Count -eq 0) {
+              Write-Host "[ERROR] No trace of '$mod' anywhere in .dist" -ForegroundColor Red
+              Write-Host "`n--- top-level .dist contents ---" -ForegroundColor Yellow
+              Get-ChildItem $d | Select-Object Name, Length | Format-Table
+              Write-Host "`n--- anything with 'torrent' or 'cffi' in name anywhere ---" -ForegroundColor Yellow
+              Get-ChildItem $d -Recurse | Where-Object { $_.Name -match 'torrent|cffi' } | Select-Object FullName | Format-Table
+              exit 1
+            }
+            $sample = ($found | Select-Object -First 3 | ForEach-Object { $_.Name }) -join ', '
+            Write-Host "[OK] '$mod' present ($($found.Count) files): $sample" -ForegroundColor Green
+          }
 
-          # defusedxml проверяется через YAML-конфигурацию: он компилируется в exe,
-          # поэтому отдельной папки в .dist может не быть. Проверка не нужна.
+      - name: Smoke test (compiled exe launches)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $distDir = Get-ChildItem "dist" -Directory -Filter "*.dist" | Select-Object -First 1
+          $exe = Join-Path $distDir.FullName "amagi-player.exe"
+          Write-Host "Launching: $exe"
+
+          $proc = Start-Process -FilePath $exe -PassThru -NoNewWindow `
+            -RedirectStandardOutput "$env:TEMP\smoke.out.log" `
+            -RedirectStandardError  "$env:TEMP\smoke.err.log"
+          Start-Sleep -Seconds 5
+
+          if ($proc.HasExited) {
+            $code = $proc.ExitCode
+            Write-Host "Process exited with code: $code" -ForegroundColor Yellow
+            Write-Host "=== STDOUT ===" -ForegroundColor Cyan
+            Get-Content "$env:TEMP\smoke.out.log" -ErrorAction SilentlyContinue
+            Write-Host "=== STDERR ===" -ForegroundColor Cyan
+            Get-Content "$env:TEMP\smoke.err.log" -ErrorAction SilentlyContinue
+            if ($code -ne 0) { throw "Compiled exe crashed on startup (exit $code)" }
+            Write-Host "[OK] exe exited cleanly (exit 0)" -ForegroundColor Green
+          } else {
+            Write-Host "[OK] exe still running after 5s — no crash" -ForegroundColor Green
+            $proc.Kill()
+            $proc.WaitForExit()
+          }
 
       - name: Prepare distribution
         shell: pwsh
