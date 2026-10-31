@@ -1,13 +1,29 @@
-# Amagi-Player runtime dependencies
-# (tests: see requirements-dev.txt)
-PyQt6-WebEngine>=6.6
-PyQt6>=6.6
-aiohttp>=3.9
-cloudscraper>=1.2.71
-curl_cffi>=0.7
-defusedxml>=0.7.1
-libtorrent>=2.0.9
-nodriver>=0.32
-psutil>=5.9
-qasync>=0.27
-websockets>=12.0
+# Amagi-Player — runtime dependencies
+# PyQt6 stack pinned: bindings + Qt6 runtime must come from the SAME release.
+# Mismatched Qt6 builds cause "DLL load failed: The specified procedure could not be found."
+PyQt6==6.11.0
+PyQt6-Qt6==6.11.2
+PyQt6-WebEngine==6.11.0
+PyQt6-WebEngine-Qt6==6.11.2
+PyQt6_sip==13.13.0
+
+# HTTP / networking
+aiohttp==3.14.5
+cloudscraper==1.2.71
+curl_cffi==0.16.3
+websockets==13.1
+
+# Async + Qt bridge
+qasync==0.28.0
+
+# Torrent
+libtorrent==2.1.1
+
+# XML safety
+defusedxml==0.7.1
+
+# Browser automation (CF bypass)
+nodriver==0.38.post1
+
+# System
+psutil==7.2.2

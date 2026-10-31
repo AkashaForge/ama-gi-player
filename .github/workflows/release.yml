@@ -56,7 +56,11 @@ jobs:
           pip install -r requirements.txt
           pip install nuitka ordered-set zstandard
 
-          Write-Host "== Verify all third-party imports ==" -ForegroundColor Cyan
+          Write-Host "`n== Installed PyQt6 versions ==" -ForegroundColor Cyan
+          pip show PyQt6 PyQt6-Qt6 PyQt6-WebEngine PyQt6-WebEngine-Qt6 PyQt6_sip |
+            Select-String -Pattern "^(Name|Version):" | Format-Table -AutoSize
+
+          Write-Host "`n== Verify all third-party imports ==" -ForegroundColor Cyan
           python -c "import PyQt6.QtWidgets; print('PyQt6.QtWidgets OK')"
           python -c "import PyQt6.QtMultimedia; print('PyQt6.QtMultimedia OK')"
           python -c "import PyQt6.QtMultimediaWidgets; print('PyQt6.QtMultimediaWidgets OK')"
@@ -71,7 +75,7 @@ jobs:
           python -c "import nodriver; print('nodriver OK')"
           python -c "import psutil; print('psutil OK')"
           python -c "import qasync; print('qasync OK')"
-          python -c "import websockets.exceptions; print('websockets OK')"
+          python -c "import websockets; print('websockets OK')"
 
       - name: Sanity-check whitelist_seed.db
         shell: pwsh
@@ -140,11 +144,9 @@ jobs:
           $nuitkaArgs = @(
             "--standalone"
 
-            # ---- PyQt6 plugin + package ----
             "--enable-plugin=pyqt6"
             "--include-package=PyQt6"
 
-            # ---- PyQt6 submodules (used in code) ----
             "--include-module=PyQt6.QtCore"
             "--include-module=PyQt6.QtGui"
             "--include-module=PyQt6.QtWidgets"
@@ -155,10 +157,8 @@ jobs:
             "--include-module=PyQt6.QtWebEngineWidgets"
             "--include-module=PyQt6.QtWebChannel"
 
-            # ---- Qt native plugins (multimedia/ffmpeg, platform, images) ----
             "--include-qt-plugins=multimedia,platforms,imageformats,iconengines,styles,tls"
 
-            # ---- Third-party packages found in code ----
             "--include-package=aiohttp"
             "--include-package=cloudscraper"
             "--include-package=curl_cffi"
@@ -169,11 +169,9 @@ jobs:
             "--include-package=qasync"
             "--include-package=websockets"
 
-            # ---- Project data ----
             "--include-data-dir=data=data"
             "--include-data-dir=ui=ui"
 
-            # ---- EXE metadata ----
             "--windows-console-mode=force"
             "--windows-icon-from-ico=assets/icon.ico"
             "--output-dir=dist"
@@ -211,13 +209,11 @@ jobs:
           $totalMb = [math]::Round((Get-ChildItem $d -Recurse | Measure-Object Length -Sum).Sum / 1MB, 1)
           Write-Host "[OK] exe: $mb MB | total: $totalMb MB" -ForegroundColor Green
 
-          # data files
           if (-not (Test-Path (Join-Path $d "data\whitelist.db")))      { throw "data/whitelist.db missing" }
           if (-not (Test-Path (Join-Path $d "data\whitelist_seed.db"))) { throw "data/whitelist_seed.db missing" }
           if (-not (Test-Path (Join-Path $d "ui\styles.qss")))          { throw "ui/styles.qss missing" }
           Write-Host "[OK] data + ui files present" -ForegroundColor Green
 
-          # third-party packages must be importable from .dist
           foreach ($mod in @("defusedxml","curl_cffi","cloudscraper","aiohttp","libtorrent","nodriver","psutil","qasync","websockets")) {
             $found = Get-ChildItem $d -Recurse -Directory -Filter $mod -ErrorAction SilentlyContinue | Select-Object -First 1
             if (-not $found) {
@@ -227,17 +223,19 @@ jobs:
           }
           Write-Host "[OK] all third-party packages present in .dist" -ForegroundColor Green
 
-          # Qt multimedia plugin
+          if (-not (Get-ChildItem $d -Recurse -Filter "Qt6WebEngineCore.dll" -ErrorAction SilentlyContinue)) {
+            throw "NO Qt6WebEngineCore.dll in .dist"
+          }
+          Write-Host "[OK] Qt6WebEngineCore.dll present" -ForegroundColor Green
+
           $mm = Get-ChildItem $d -Recurse -Filter "*mediaplugin.dll" -ErrorAction SilentlyContinue
           if ($mm.Count -eq 0) { throw "NO multimedia plugin DLL in .dist" }
           Write-Host "[OK] multimedia plugins: $($mm.Count)" -ForegroundColor Green
 
-          # ffmpeg backend
           $ff = Get-ChildItem $d -Recurse -Filter "avcodec-*.dll" -ErrorAction SilentlyContinue
           if ($ff.Count -eq 0) { throw "NO avcodec-*.dll in .dist" }
           Write-Host "[OK] ffmpeg backend: $($ff.Count) dll" -ForegroundColor Green
 
-          # Qt platform
           if (-not (Get-ChildItem $d -Recurse -Filter "qwindows.dll" -ErrorAction SilentlyContinue)) {
             throw "NO qwindows.dll in .dist"
           }
