@@ -214,28 +214,36 @@ jobs:
           if (-not (Test-Path (Join-Path $d "ui\styles.qss")))          { throw "ui/styles.qss missing" }
           Write-Host "[OK] data + ui files present" -ForegroundColor Green
 
-          foreach ($mod in @("defusedxml","curl_cffi","cloudscraper","aiohttp","libtorrent","nodriver","psutil","qasync","websockets")) {
-            $found = Get-ChildItem $d -Recurse -Directory -Filter $mod -ErrorAction SilentlyContinue | Select-Object -First 1
-            if (-not $found) {
-              $pyd = Get-ChildItem $d -Recurse -Filter "$mod*.pyd" -ErrorAction SilentlyContinue | Select-Object -First 1
-              if (-not $pyd) { throw "package '$mod' not found in .dist" }
+          # C-extension packages must exist as .pyd or directory
+          # (pure-Python packages like defusedxml/aiohttp/qasync/websockets/
+          #  cloudscraper/nodriver/psutil are compiled INTO the exe by Nuitka
+          #  and do NOT create separate directories in .dist)
+          foreach ($mod in @("libtorrent","curl_cffi")) {
+            $pyd = Get-ChildItem $d -Recurse -Filter "$mod*.pyd" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $pyd) {
+              $dir = Get-ChildItem $d -Recurse -Directory -Filter $mod -ErrorAction SilentlyContinue | Select-Object -First 1
+              if (-not $dir) { throw "C-extension package '$mod' not found in .dist" }
             }
           }
-          Write-Host "[OK] all third-party packages present in .dist" -ForegroundColor Green
+          Write-Host "[OK] C-extension packages (libtorrent, curl_cffi) present in .dist" -ForegroundColor Green
 
+          # Qt WebEngine core DLL
           if (-not (Get-ChildItem $d -Recurse -Filter "Qt6WebEngineCore.dll" -ErrorAction SilentlyContinue)) {
             throw "NO Qt6WebEngineCore.dll in .dist"
           }
           Write-Host "[OK] Qt6WebEngineCore.dll present" -ForegroundColor Green
 
+          # Qt multimedia plugin
           $mm = Get-ChildItem $d -Recurse -Filter "*mediaplugin.dll" -ErrorAction SilentlyContinue
           if ($mm.Count -eq 0) { throw "NO multimedia plugin DLL in .dist" }
           Write-Host "[OK] multimedia plugins: $($mm.Count)" -ForegroundColor Green
 
+          # ffmpeg backend
           $ff = Get-ChildItem $d -Recurse -Filter "avcodec-*.dll" -ErrorAction SilentlyContinue
           if ($ff.Count -eq 0) { throw "NO avcodec-*.dll in .dist" }
           Write-Host "[OK] ffmpeg backend: $($ff.Count) dll" -ForegroundColor Green
 
+          # Qt platform plugin
           if (-not (Get-ChildItem $d -Recurse -Filter "qwindows.dll" -ErrorAction SilentlyContinue)) {
             throw "NO qwindows.dll in .dist"
           }
