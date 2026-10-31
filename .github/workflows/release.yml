@@ -25,6 +25,9 @@ jobs:
     timeout-minutes: 150
 
     steps:
+      # ----------------------------------------------------------------
+      # 1. SOURCE
+      # ----------------------------------------------------------------
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -36,6 +39,9 @@ jobs:
           python-version: "3.13"
           cache: "pip"
 
+      # ----------------------------------------------------------------
+      # 2. PRE-FLIGHT
+      # ----------------------------------------------------------------
       - name: Verify project files
         shell: pwsh
         run: |
@@ -48,6 +54,9 @@ jobs:
           Write-Host "[OK] icon.ico, whitelist_seed.db, styles.qss, main.py present"
           Write-Host "[OK] seed_posters: $posters files"
 
+      # ----------------------------------------------------------------
+      # 3. DEPENDENCIES
+      # ----------------------------------------------------------------
       - name: Install dependencies
         shell: pwsh
         run: |
@@ -60,24 +69,29 @@ jobs:
           pip show PyQt6 PyQt6-Qt6 PyQt6-WebEngine PyQt6-WebEngine-Qt6 PyQt6_sip |
             Select-String -Pattern "^(Name|Version):" | Format-Table -AutoSize
 
-          Write-Host "`n== Verify system-Python imports (sanity) ==" -ForegroundColor Cyan
-          python -c "import PyQt6.QtWidgets; print('PyQt6.QtWidgets OK')"
-          python -c "import PyQt6.QtMultimedia; print('PyQt6.QtMultimedia OK')"
-          python -c "import PyQt6.QtMultimediaWidgets; print('PyQt6.QtMultimediaWidgets OK')"
-          python -c "from PyQt6.QtWebEngineCore import QWebEnginePage; print('PyQt6.QtWebEngineCore OK')"
-          python -c "from PyQt6.QtWebEngineWidgets import QWebEngineView; print('PyQt6.QtWebEngineWidgets OK')"
-          python -c "from PyQt6.QtWebChannel import QWebChannel; print('PyQt6.QtWebChannel OK')"
-          python -c "import aiohttp; print('aiohttp OK')"
-          python -c "import cloudscraper; print('cloudscraper OK')"
-          python -c "import curl_cffi.requests; print('curl_cffi OK')"
-          python -c "import defusedxml; print('defusedxml OK')"
-          python -c "from defusedxml import ElementTree; print('defusedxml.ElementTree OK')"
-          python -c "from defusedxml.ElementTree import fromstring; print('defusedxml.ElementTree.fromstring OK')"
-          python -c "import libtorrent; print('libtorrent OK')"
-          python -c "import nodriver; print('nodriver OK')"
-          python -c "import psutil; print('psutil OK')"
-          python -c "import qasync; print('qasync OK')"
-          python -c "import websockets; print('websockets OK')"
+      - name: Verify imports (system Python)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Write-Host "== PyQt6 ==" -ForegroundColor Cyan
+          python -c "import PyQt6.QtWidgets; print('OK: PyQt6.QtWidgets')"
+          python -c "import PyQt6.QtMultimedia; print('OK: PyQt6.QtMultimedia')"
+          python -c "import PyQt6.QtMultimediaWidgets; print('OK: PyQt6.QtMultimediaWidgets')"
+          python -c "from PyQt6.QtWebEngineCore import QWebEnginePage; print('OK: PyQt6.QtWebEngineCore')"
+          python -c "from PyQt6.QtWebEngineWidgets import QWebEngineView; print('OK: PyQt6.QtWebEngineWidgets')"
+          python -c "from PyQt6.QtWebChannel import QWebChannel; print('OK: PyQt6.QtWebChannel')"
+          Write-Host "== Third-party ==" -ForegroundColor Cyan
+          python -c "import aiohttp; print('OK: aiohttp')"
+          python -c "import cloudscraper; print('OK: cloudscraper')"
+          python -c "import curl_cffi.requests; print('OK: curl_cffi')"
+          python -c "import defusedxml; print('OK: defusedxml')"
+          python -c "from defusedxml import ElementTree; print('OK: defusedxml.ElementTree')"
+          python -c "from defusedxml.ElementTree import fromstring; print('OK: defusedxml.ElementTree.fromstring')"
+          python -c "import libtorrent; print('OK: libtorrent')"
+          python -c "import nodriver; print('OK: nodriver')"
+          python -c "import psutil; print('OK: psutil')"
+          python -c "import qasync; print('OK: qasync')"
+          python -c "import websockets; print('OK: websockets')"
 
       - name: Sanity-check whitelist_seed.db
         shell: pwsh
@@ -107,6 +121,9 @@ jobs:
           "version4=$version4" >> $env:GITHUB_OUTPUT
           Write-Host "Tag=$tag Version=$version Version4=$version4"
 
+      # ----------------------------------------------------------------
+      # 4. DATA PREP
+      # ----------------------------------------------------------------
       - name: Clean personal files from data/
         shell: pwsh
         run: |
@@ -136,7 +153,10 @@ jobs:
           & python -c "import sqlite3; c=sqlite3.connect('data/whitelist.db'); c.execute('UPDATE movie_whitelist SET available=1 WHERE available IS NULL'); c.commit(); c.close()"
           Write-Host "[OK] data/whitelist.db prepared"
 
-      - name: Build with Nuitka (standalone, exhaustive includes)
+      # ----------------------------------------------------------------
+      # 5. BUILD (Nuitka standalone)
+      # ----------------------------------------------------------------
+      - name: Build with Nuitka
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -144,11 +164,10 @@ jobs:
           if (Test-Path "dist") { Remove-Item "dist" -Recurse -Force }
 
           $nuitkaArgs = @(
+            # ------- build mode -------
             "--standalone"
 
-            # ============================================================
-            # PyQt6 — plugin + all used submodules
-            # ============================================================
+            # ------- PyQt6 -------
             "--enable-plugin=pyqt6"
             "--include-package=PyQt6"
             "--include-package-data=PyQt6"
@@ -161,14 +180,9 @@ jobs:
             "--include-module=PyQt6.QtWebEngineCore"
             "--include-module=PyQt6.QtWebEngineWidgets"
             "--include-module=PyQt6.QtWebChannel"
-
-            # Qt native plugins (multimedia/ffmpeg, platform, imageformats)
             "--include-qt-plugins=multimedia,platforms,imageformats,iconengines,styles,tls"
 
-            # ============================================================
-            # defusedxml — aggressive: force-follow ALL submodules
-            # (torznab_parser.py uses from defusedxml.ElementTree import ...)
-            # ============================================================
+            # ------- defusedxml (aggressive) -------
             "--include-package=defusedxml"
             "--include-package-data=defusedxml"
             "--follow-import-to=defusedxml"
@@ -184,74 +198,53 @@ jobs:
             "--include-module=defusedxml.sax"
             "--include-module=defusedxml.xmlrpc"
 
-            # ============================================================
-            # aiohttp — pure-Python + data (has SSL cert bundles etc.)
-            # ============================================================
+            # ------- aiohttp -------
             "--include-package=aiohttp"
             "--include-package-data=aiohttp"
             "--follow-import-to=aiohttp"
 
-            # ============================================================
-            # cloudscraper — pure-Python
-            # ============================================================
+            # ------- cloudscraper -------
             "--include-package=cloudscraper"
             "--include-package-data=cloudscraper"
             "--follow-import-to=cloudscraper"
 
-            # ============================================================
-            # curl_cffi — C-extension + data (cacert.pem, libcurl DLLs)
-            # ============================================================
+            # ------- curl_cffi -------
             "--include-package=curl_cffi"
             "--include-package-data=curl_cffi"
             "--include-module=curl_cffi"
             "--include-module=curl_cffi.requests"
             "--include-module=curl_cffi._wrapper"
-            "--include-data-dir=../"  # no-op, безопасная заглушка; реальные data — через --include-package-data
 
-            # ============================================================
-            # libtorrent — C-extension
-            # ============================================================
+            # ------- libtorrent -------
             "--include-package=libtorrent"
             "--include-package-data=libtorrent"
             "--include-module=libtorrent"
 
-            # ============================================================
-            # nodriver — pure-Python + data (CDP js files)
-            # ============================================================
+            # ------- nodriver -------
             "--include-package=nodriver"
             "--include-package-data=nodriver"
             "--follow-import-to=nodriver"
 
-            # ============================================================
-            # psutil — C-extension (has _psutil_windows.pyd)
-            # ============================================================
+            # ------- psutil -------
             "--include-package=psutil"
             "--include-package-data=psutil"
             "--include-module=psutil"
 
-            # ============================================================
-            # qasync — pure-Python + C-extension _qt
-            # ============================================================
+            # ------- qasync -------
             "--include-package=qasync"
             "--include-package-data=qasync"
             "--include-module=qasync._qt"
 
-            # ============================================================
-            # websockets — pure-Python + optional C speedups
-            # ============================================================
+            # ------- websockets -------
             "--include-package=websockets"
             "--include-package-data=websockets"
             "--follow-import-to=websockets"
 
-            # ============================================================
-            # Project data
-            # ============================================================
+            # ------- project data -------
             "--include-data-dir=data=data"
             "--include-data-dir=ui=ui"
 
-            # ============================================================
-            # EXE metadata
-            # ============================================================
+            # ------- exe metadata -------
             "--windows-console-mode=force"
             "--windows-icon-from-ico=assets/icon.ico"
             "--output-dir=dist"
@@ -264,16 +257,21 @@ jobs:
             "--file-description=Amagi-Player"
             "--copyright=Copyright (C) 2026 AkashaForge. GPLv3."
 
+            # ------- report + entry point -------
             "--report=dist/nuitka-report.xml"
             "main.py"
           )
 
           Write-Host ""
+          Write-Host "=== Nuitka command ===" -ForegroundColor Gray
           Write-Host "python -m nuitka $($nuitkaArgs -join ' ')" -ForegroundColor Gray
           Write-Host ""
           python -m nuitka @nuitkaArgs
           if ($LASTEXITCODE -ne 0) { throw "nuitka failed" }
 
+      # ----------------------------------------------------------------
+      # 6. VERIFY (files present)
+      # ----------------------------------------------------------------
       - name: Verify build (files present)
         shell: pwsh
         run: |
@@ -294,38 +292,76 @@ jobs:
           if (-not (Test-Path (Join-Path $d "ui\styles.qss")))          { throw "ui/styles.qss missing" }
           Write-Host "[OK] data + ui files present" -ForegroundColor Green
 
-          # C-extensions MUST exist as .pyd or directory
           foreach ($mod in @("libtorrent","curl_cffi")) {
             $pyd = Get-ChildItem $d -Recurse -Filter "$mod*.pyd" -ErrorAction SilentlyContinue | Select-Object -First 1
             if (-not $pyd) {
               $dir = Get-ChildItem $d -Recurse -Directory -Filter $mod -ErrorAction SilentlyContinue | Select-Object -First 1
-              if (-not $dir) { throw "C-extension package '$mod' not found in .dist" }
+              if (-not $dir) { throw "C-extension '$mod' not found in .dist" }
             }
           }
           Write-Host "[OK] C-extensions present (libtorrent, curl_cffi)" -ForegroundColor Green
 
-          # Qt WebEngine core DLL
           if (-not (Get-ChildItem $d -Recurse -Filter "Qt6WebEngineCore.dll" -ErrorAction SilentlyContinue)) {
             throw "NO Qt6WebEngineCore.dll in .dist"
           }
           Write-Host "[OK] Qt6WebEngineCore.dll present" -ForegroundColor Green
 
-          # Qt multimedia plugin
           $mm = Get-ChildItem $d -Recurse -Filter "*mediaplugin.dll" -ErrorAction SilentlyContinue
           if ($mm.Count -eq 0) { throw "NO multimedia plugin DLL in .dist" }
           Write-Host "[OK] multimedia plugins: $($mm.Count)" -ForegroundColor Green
 
-          # ffmpeg backend
           $ff = Get-ChildItem $d -Recurse -Filter "avcodec-*.dll" -ErrorAction SilentlyContinue
           if ($ff.Count -eq 0) { throw "NO avcodec-*.dll in .dist" }
           Write-Host "[OK] ffmpeg backend: $($ff.Count) dll" -ForegroundColor Green
 
-          # Qt platform plugin
           if (-not (Get-ChildItem $d -Recurse -Filter "qwindows.dll" -ErrorAction SilentlyContinue)) {
             throw "NO qwindows.dll in .dist"
           }
           Write-Host "[OK] qwindows.dll present" -ForegroundColor Green
 
+      # ----------------------------------------------------------------
+      # 7. SMOKE TEST (run compiled exe with --version)
+      # ----------------------------------------------------------------
+      # Если main.py поддерживает "--version" — он сразу выйдет с кодом 0.
+      # Если не поддерживает — exe запустит GUI, что в headless CI упадёт.
+      # Поэтому используем таймаут и считаем "Process didn't crash within 5s" успехом
+      # только если exit code == 0 (--version) ИЛИ процесс ещё жив через 5 сек.
+      - name: Smoke test (compiled exe launches)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $distDir = Get-ChildItem "dist" -Directory -Filter "*.dist" | Select-Object -First 1
+          $exe = Join-Path $distDir.FullName "Amagi-Player.exe"
+          Write-Host "Launching: $exe --version"
+
+          $proc = Start-Process -FilePath $exe `
+            -ArgumentList "--version" `
+            -PassThru -NoNewWindow `
+            -RedirectStandardOutput "$env:TEMP\smoke.out.log" `
+            -RedirectStandardError  "$env:TEMP\smoke.err.log"
+
+          Start-Sleep -Seconds 5
+
+          if ($proc.HasExited) {
+            $code = $proc.ExitCode
+            Write-Host "Exit code: $code"
+            if ($code -ne 0) {
+              Write-Host "=== STDOUT ===" -ForegroundColor Cyan
+              Get-Content "$env:TEMP\smoke.out.log" -ErrorAction SilentlyContinue
+              Write-Host "=== STDERR ===" -ForegroundColor Cyan
+              Get-Content "$env:TEMP\smoke.err.log" -ErrorAction SilentlyContinue
+              throw "Compiled exe crashed on startup with exit code $code"
+            }
+            Write-Host "[OK] exe exited cleanly with --version (exit 0)" -ForegroundColor Green
+          } else {
+            Write-Host "[OK] exe still running after 5s (GUI mode, no crash)" -ForegroundColor Green
+            $proc.Kill()
+            $proc.WaitForExit()
+          }
+
+      # ----------------------------------------------------------------
+      # 8. PACKAGE
+      # ----------------------------------------------------------------
       - name: Prepare distribution
         shell: pwsh
         run: |
@@ -380,6 +416,9 @@ jobs:
           $mb = [math]::Round((Get-Item $zip).Length / 1MB, 1)
           Write-Host "[OK] $zip ($mb MB)" -ForegroundColor Green
 
+      # ----------------------------------------------------------------
+      # 9. UPLOAD + RELEASE
+      # ----------------------------------------------------------------
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
