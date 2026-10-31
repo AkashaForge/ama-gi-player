@@ -1,6 +1,6 @@
 # Amagi-Player runtime dependencies
 # (tests: see requirements-dev.txt)
-
+PyQt6-WebEngine>=6.6
 PyQt6>=6.6
 aiohttp>=3.9
 cloudscraper>=1.2.71

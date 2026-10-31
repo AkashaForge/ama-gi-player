@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (e.g., v2.2.3)"
+        description: "Tag to release (e.g., v2.2.4)"
         required: true
         type: string
 
@@ -60,7 +60,9 @@ jobs:
           python -c "import PyQt6.QtWidgets; print('PyQt6.QtWidgets OK')"
           python -c "import PyQt6.QtMultimedia; print('PyQt6.QtMultimedia OK')"
           python -c "import PyQt6.QtMultimediaWidgets; print('PyQt6.QtMultimediaWidgets OK')"
-          python -c "import PyQt6.QtWebEngineWidgets; print('PyQt6.QtWebEngineWidgets OK')"
+          python -c "from PyQt6.QtWebEngineCore import QWebEnginePage; print('PyQt6.QtWebEngineCore OK')"
+          python -c "from PyQt6.QtWebEngineWidgets import QWebEngineView; print('PyQt6.QtWebEngineWidgets OK')"
+          python -c "from PyQt6.QtWebChannel import QWebChannel; print('PyQt6.QtWebChannel OK')"
           python -c "import aiohttp; print('aiohttp OK')"
           python -c "import cloudscraper; print('cloudscraper OK')"
           python -c "import curl_cffi.requests; print('curl_cffi OK')"
@@ -219,7 +221,6 @@ jobs:
           foreach ($mod in @("defusedxml","curl_cffi","cloudscraper","aiohttp","libtorrent","nodriver","psutil","qasync","websockets")) {
             $found = Get-ChildItem $d -Recurse -Directory -Filter $mod -ErrorAction SilentlyContinue | Select-Object -First 1
             if (-not $found) {
-              # some modules ship as single .pyd/.dll — check for that too
               $pyd = Get-ChildItem $d -Recurse -Filter "$mod*.pyd" -ErrorAction SilentlyContinue | Select-Object -First 1
               if (-not $pyd) { throw "package '$mod' not found in .dist" }
             }
