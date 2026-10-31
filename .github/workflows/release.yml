@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   # ======================================================================
-  # 1. WINDOWS STANDALONE (Dev ZIP) — полный, с иконкой
+  # 1. WINDOWS STANDALONE (Dev ZIP)
   # ======================================================================
   build-windows-standalone:
     name: Windows Standalone (Dev ZIP)
@@ -55,13 +55,10 @@ jobs:
           Write-Host "[OK] seed: $seed films"
           if ([int]$seed -eq 0) { throw "seed empty" }
 
-      # ---- КЛЮЧЕВОЙ ШАГ, КОТОРЫЙ Я ПОТЕРЯЛ ----
-      - name: Prepare whitelist.db from seed (BEFORE build)
+      - name: Prepare whitelist.db BEFORE build (страховка №1)
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-
-          # 1) Clean personal files
           $personal = @(
             "sources.txt","sources.txt.bak",
             "direct_sources.txt","direct_sources.txt.bak",
@@ -78,16 +75,10 @@ jobs:
             $p = Join-Path "data" $f
             if (Test-Path $p) { Remove-Item $p -Force }
           }
-
-          # 2) seed -> whitelist.db
           Copy-Item "data\whitelist_seed.db" "data\whitelist.db" -Force
-
-          # 3) available=1
           & python -c "import sqlite3; c=sqlite3.connect('data/whitelist.db'); c.execute('UPDATE movie_whitelist SET available=1 WHERE available IS NULL'); c.commit(); c.close()"
-
-          # 4) Verify
           $cnt = (& python -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('SELECT COUNT(*) FROM movie_whitelist').fetchone()[0])" "data/whitelist.db").Trim()
-          Write-Host "[OK] data/whitelist.db ready: $cnt films"
+          Write-Host "[OK] source data/whitelist.db: $cnt films"
           if ([int]$cnt -eq 0) { throw "whitelist.db empty after copy" }
 
       - name: Determine version
@@ -148,29 +139,44 @@ jobs:
             main.py
           if ($LASTEXITCODE -ne 0) { throw "nuitka failed" }
 
-      - name: Verify build (whitelist.db must be inside .dist)
+      - name: Ensure whitelist.db in .dist AFTER build (страховка №2)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $d = (Get-ChildItem "dist" -Directory -Filter "*.dist" | Select-Object -First 1).FullName
+          $distData = Join-Path $d "data"
+          $distWhitelist = Join-Path $distData "whitelist.db"
+          $distSeed = Join-Path $distData "whitelist_seed.db"
+
+          if (-not (Test-Path $distData)) { New-Item -ItemType Directory -Force -Path $distData | Out-Null }
+          if (-not (Test-Path $distSeed)) { throw "whitelist_seed.db missing in .dist/data — что-то совсем не так" }
+
+          # Если whitelist.db нет в .dist — копируем из seed ПРЯМО ТУДА
+          if (-not (Test-Path $distWhitelist)) {
+            Write-Host "[WARN] whitelist.db not in .dist — copying from seed" -ForegroundColor Yellow
+            Copy-Item $distSeed $distWhitelist -Force
+            & python -c "import sqlite3; c=sqlite3.connect('$($distWhitelist -replace '\\','/')'); c.execute('UPDATE movie_whitelist SET available=1 WHERE available IS NULL'); c.commit(); c.close()"
+          } else {
+            Write-Host "[OK] whitelist.db already in .dist" -ForegroundColor Green
+          }
+
+          $cnt = (& python -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('SELECT COUNT(*) FROM movie_whitelist').fetchone()[0])" $distWhitelist).Trim()
+          Write-Host "[OK] .dist/data/whitelist.db: $cnt films" -ForegroundColor Green
+          if ([int]$cnt -eq 0) { throw "whitelist.db in .dist is EMPTY" }
+
+      - name: Verify build (multimedia, ffmpeg, data)
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $d = (Get-ChildItem "dist" -Directory -Filter "*.dist" | Select-Object -First 1).FullName
           if (-not (Test-Path "$d\amagi-player.exe")) { throw "exe missing" }
-
-          # data/ + ui/
-          if (-not (Test-Path "$d\data\whitelist_seed.db")) { throw "whitelist_seed.db missing in .dist" }
-          if (-not (Test-Path "$d\ui\styles.qss"))          { throw "ui/styles.qss missing in .dist" }
-
-          # ⚠️ ГЛАВНАЯ ПРОВЕРКА: whitelist.db должен быть в .dist и не пустой
-          if (-not (Test-Path "$d\data\whitelist.db")) { throw "data/whitelist.db MISSING in .dist — лента будет пустой!" }
-          $cnt = (& python -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('SELECT COUNT(*) FROM movie_whitelist').fetchone()[0])" "$d/data/whitelist.db").Trim()
-          Write-Host "[OK] .dist/data/whitelist.db: $cnt films" -ForegroundColor Green
-          if ([int]$cnt -eq 0) { throw "whitelist.db in .dist is EMPTY — лента будет пустой!" }
-
-          # multimedia / ffmpeg
+          if (-not (Test-Path "$d\data\whitelist.db"))       { throw "whitelist.db missing" }
+          if (-not (Test-Path "$d\data\whitelist_seed.db"))  { throw "whitelist_seed.db missing" }
+          if (-not (Test-Path "$d\ui\styles.qss"))           { throw "ui/styles.qss missing" }
           $mm = Get-ChildItem $d -Recurse -Filter "*mediaplugin.dll" -ErrorAction SilentlyContinue
-          if ($mm.Count -eq 0) { throw "No multimedia plugin DLL in .dist" }
+          if ($mm.Count -eq 0) { throw "No multimedia plugin DLL" }
           $ff = Get-ChildItem $d -Recurse -Filter "avcodec-*.dll" -ErrorAction SilentlyContinue
-          if ($ff.Count -eq 0) { throw "No avcodec-*.dll in .dist" }
-
+          if ($ff.Count -eq 0) { throw "No avcodec-*.dll" }
           $mb = [math]::Round((Get-ChildItem $d -Recurse | Measure-Object Length -Sum).Sum / 1MB, 1)
           Write-Host "[OK] .dist total: $mb MB" -ForegroundColor Green
 
@@ -211,7 +217,7 @@ jobs:
           retention-days: 7
 
   # ======================================================================
-  # 2. LINUX STANDALONE (экспериментальный) — с иконкой если удастся
+  # 2. LINUX STANDALONE (экспериментальный)
   # ======================================================================
   build-linux:
     name: Linux Standalone (experimental)
@@ -262,17 +268,15 @@ jobs:
           pip install -r requirements.txt
           pip install nuitka ordered-set zstandard
 
-      - name: Prepare whitelist.db from seed
+      - name: Prepare whitelist.db BEFORE build (страховка №1)
         run: |
           set -e
-          # clean personal
           rm -f data/whitelist.db data/whitelist.db-wal data/whitelist.db-shm data/whitelist.db-journal
           rm -f data/mode.txt data/sources.txt data/sources.txt.bak data/app_data.db data/app_data.db-wal data/app_data.db-shm
-          # seed -> whitelist.db
           cp data/whitelist_seed.db data/whitelist.db
           python -c "import sqlite3; c=sqlite3.connect('data/whitelist.db'); c.execute('UPDATE movie_whitelist SET available=1 WHERE available IS NULL'); c.commit(); c.close()"
           COUNT=$(python -c "import sqlite3; print(sqlite3.connect('data/whitelist.db').execute('SELECT COUNT(*) FROM movie_whitelist').fetchone()[0])")
-          echo "[OK] data/whitelist.db: $COUNT films"
+          echo "[OK] source data/whitelist.db: $COUNT films"
           test "$COUNT" -gt 0
 
       - name: Convert icon for Linux
@@ -321,17 +325,31 @@ jobs:
             --report=dist-linux/nuitka-report.xml \
             main.py
 
-      - name: Verify Linux build
+      - name: Ensure whitelist.db in .dist AFTER build (страховка №2)
         run: |
           set -e
           DIST=$(find dist-linux -maxdepth 1 -type d -name "*.dist" | head -1)
           test -n "$DIST" || { echo "no .dist"; exit 1; }
-          test -x "$DIST/amagi-player" || { echo "binary missing"; exit 1; }
-          test -f "$DIST/data/whitelist_seed.db" || { echo "seed missing"; exit 1; }
-          test -f "$DIST/data/whitelist.db" || { echo "whitelist.db missing — feed will be empty"; exit 1; }
+          mkdir -p "$DIST/data"
+          if [ ! -f "$DIST/data/whitelist_seed.db" ]; then
+            echo "whitelist_seed.db missing in .dist/data — fatal"
+            exit 1
+          fi
+          if [ ! -f "$DIST/data/whitelist.db" ]; then
+            echo "[WARN] whitelist.db not in .dist — copying from seed"
+            cp "$DIST/data/whitelist_seed.db" "$DIST/data/whitelist.db"
+            python -c "import sqlite3; c=sqlite3.connect('$DIST/data/whitelist.db'); c.execute('UPDATE movie_whitelist SET available=1 WHERE available IS NULL'); c.commit(); c.close()"
+          fi
           COUNT=$(python -c "import sqlite3; print(sqlite3.connect('$DIST/data/whitelist.db').execute('SELECT COUNT(*) FROM movie_whitelist').fetchone()[0])")
           echo "[OK] .dist/data/whitelist.db: $COUNT films"
           test "$COUNT" -gt 0
+
+      - name: Verify Linux build
+        run: |
+          set -e
+          DIST=$(find dist-linux -maxdepth 1 -type d -name "*.dist" | head -1)
+          test -x "$DIST/amagi-player" || { echo "binary missing"; exit 1; }
+          test -f "$DIST/ui/styles.qss" || { echo "ui/styles.qss missing"; exit 1; }
 
       - name: Create tarball
         run: |
