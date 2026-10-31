@@ -180,7 +180,10 @@ jobs:
             "--include-module=PyQt6.QtWebEngineCore"
             "--include-module=PyQt6.QtWebEngineWidgets"
             "--include-module=PyQt6.QtWebChannel"
-            "--include-qt-plugins=multimedia,platforms,imageformats,iconengines,styles,tls"
+
+            # ------- Qt native plugins (clean, no qml) -------
+            "--include-qt-plugins=sensible,styles"
+            "--noinclude-qt-plugins=qml"
 
             # ------- defusedxml (aggressive) -------
             "--include-package=defusedxml"
@@ -320,7 +323,7 @@ jobs:
           Write-Host "[OK] qwindows.dll present" -ForegroundColor Green
 
       # ----------------------------------------------------------------
-      # 7. SMOKE TEST (run compiled exe with --version)
+      # 7. SMOKE TEST (compiled exe launches)
       # ----------------------------------------------------------------
       # Если main.py поддерживает "--version" — он сразу выйдет с кодом 0.
       # Если не поддерживает — exe запустит GUI, что в headless CI упадёт.
