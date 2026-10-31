@@ -1,0 +1,11 @@
+- module-name: 'defusedxml.common'
+  implicit-imports:
+    - depends:
+        - 'defusedxml.ElementTree'
+        - 'defusedxml.cElementTree'
+        - 'defusedxml.expatbuilder'
+        - 'defusedxml.expatreader'
+        - 'defusedxml.minidom'
+        - 'defusedxml.pulldom'
+        - 'defusedxml.sax'
+        - 'defusedxml.xmlrpc'

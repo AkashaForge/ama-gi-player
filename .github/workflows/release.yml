@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (e.g., v2.2.5)"
+        description: "Tag to release (e.g., v2.2.6)"
         required: true
         type: string
 
@@ -52,15 +52,6 @@ jobs:
           python -c "import cloudscraper; print('cloudscraper OK')"
           python -c "import qasync, psutil, websockets, nodriver; print('rest OK')"
 
-      - name: Determine defusedxml path
-        id: defusedxml_path
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $defused_path = (& python -c "import defusedxml, os; print(os.path.dirname(defusedxml.__file__))").Trim()
-          Write-Host "defusedxml path: $defused_path"
-          "path=$defused_path" >> $env:GITHUB_OUTPUT
-
       - name: Sanity-check whitelist_seed.db
         shell: pwsh
         run: |
@@ -102,8 +93,6 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $v4 = "${{ steps.version.outputs.version4 }}"
-          $defused_path = "${{ steps.defusedxml_path.outputs.path }}"
-          $site_packages = Split-Path $defused_path -Parent
 
           $nuitkaArgs = @(
             "--standalone"
@@ -115,21 +104,10 @@ jobs:
             "--include-module=PyQt6.QtWebEngineCore"
             "--include-module=PyQt6.QtWebEngineWidgets"
 
-            # --- defusedxml (force include + plugin directory for dynamic import) ---
+            # --- defusedxml: штатная YAML-конфигурация для неявных импортов ---
             "--include-package=defusedxml"
-            "--include-package-data=defusedxml"
             "--follow-import-to=defusedxml"
-            "--include-module=defusedxml"
-            "--include-module=defusedxml.common"
-            "--include-module=defusedxml.ElementTree"
-            "--include-module=defusedxml.cElementTree"
-            "--include-module=defusedxml.expatbuilder"
-            "--include-module=defusedxml.expatreader"
-            "--include-module=defusedxml.minidom"
-            "--include-module=defusedxml.pulldom"
-            "--include-module=defusedxml.sax"
-            "--include-module=defusedxml.xmlrpc"
-            "--include-plugin-directory=$defused_path"
+            "--user-package-configuration-file=nuitka-package-config.yml"
 
             # --- curl_cffi (C-extension + wrapper) ---
             "--include-package=curl_cffi"
@@ -192,13 +170,6 @@ jobs:
           if (-not (Test-Path "$d\ui\styles.qss"))          { Write-Host "[ERROR] ui/styles.qss missing in dist" -ForegroundColor Red; exit 1 }
           Write-Host "[OK] data + ui present" -ForegroundColor Green
 
-          # defusedxml: проверяем, что пакет реально попал в .dist
-          $defusedDir = Get-ChildItem $d -Recurse -Directory -Filter "defusedxml" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $defusedDir) { Write-Host "[ERROR] defusedxml directory missing in dist" -ForegroundColor Red; exit 1 }
-          $defusedPy = Get-ChildItem $defusedDir.FullName -Filter "*.py" -ErrorAction SilentlyContinue
-          if ($defusedPy.Count -eq 0) { Write-Host "[ERROR] defusedxml has no .py files in dist" -ForegroundColor Red; exit 1 }
-          Write-Host "[OK] defusedxml present in dist ($($defusedPy.Count) .py files)" -ForegroundColor Green
-
           # Qt multimedia plugin
           $mmFiles = Get-ChildItem $d -Recurse -Filter "*mediaplugin.dll" -ErrorAction SilentlyContinue
           if ($mmFiles.Count -eq 0) {
@@ -221,6 +192,9 @@ jobs:
           $cc = Get-ChildItem $d -Recurse -Filter "curl_cffi*" -ErrorAction SilentlyContinue
           if ($cc.Count -eq 0) { Write-Host "[ERROR] curl_cffi missing in dist" -ForegroundColor Red; exit 1 }
           Write-Host "[OK] C-extensions (libtorrent, curl_cffi) present" -ForegroundColor Green
+
+          # defusedxml проверяется через YAML-конфигурацию: он компилируется в exe,
+          # поэтому отдельной папки в .dist может не быть. Проверка не нужна.
 
       - name: Prepare distribution
         shell: pwsh
