@@ -93,10 +93,10 @@ jobs:
             --output-filename=amagi-player.exe `
             --assume-yes-for-downloads `
             --company-name=AkashaForge `
-            --product-name=Amagi-Player `
+            --product-name="Amagi-Player" `
             --file-version=$v4 `
             --product-version=$v4 `
-            --file-description=Amagi-Player `
+            --file-description="Amagi-Player (standalone)" `
             --report=dist/nuitka-report.xml `
             main.py
           if ($LASTEXITCODE -ne 0) { throw "nuitka failed" }
@@ -204,10 +204,10 @@ jobs:
             --output-filename=amagi-player.exe `
             --assume-yes-for-downloads `
             --company-name=AkashaForge `
-            --product-name=Amagi-Player `
+            --product-name="Amagi-Player" `
             --file-version=$v4 `
             --product-version=$v4 `
-            --file-description=Amagi-Player (onefile) `
+            --file-description="Amagi-Player (onefile)" `
             main.py
           if ($LASTEXITCODE -ne 0) { throw "nuitka onefile failed" }
 
@@ -219,7 +219,7 @@ jobs:
           retention-days: 7
 
   # ======================================================================
-  # 3. LINUX STANDALONE
+  # 3. LINUX STANDALONE — без --file-version (Windows-only, Nuitka игнорирует)
   # ======================================================================
   build-linux:
     name: Linux Standalone (experimental)
