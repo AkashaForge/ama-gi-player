@@ -20,11 +20,16 @@ _VIDEO_FORMAT_MARKERS = (
     "quicktime", "windows media", "divx", "xvid", "webm", "avi",
 )
 
+# "trailer"/"teaser"/"making of" — реально трейлеры. "clip" НЕ включён:
+# на IA старые фильмы часто залиты с "clip" в имени, хотя это полный фильм.
 _TRAILER_RE = re.compile(
-    r'\b(?:trailer|teaser|clip|preview|promo|spot|tlr|'
-    r'making\s+of|behind\s+the\s+scenes|bts|interview)\b',
+    r'\b(?:trailer|teaser|making\s+of|behind\s+the\s+scenes)\b',
     re.IGNORECASE,
 )
+
+# Файл меньше 50 MB с "trailer" в имени — точно трейлер. Больше — это
+# скорее всего полный фильм, залитый криворуко.
+_TRAILER_SIZE_BYTES = 50 * 1024 * 1024
 
 _MIN_FULL_MOVIE_BYTES = config.ARCHIVE_ORG_MIN_MOVIE_SIZE
 
@@ -88,7 +93,11 @@ class MetadataFetcher:
             _CACHE.put(identifier, None)
             return None
 
-        result = self._pick_best_video(identifier, data.get("files") or [])
+        files = data.get("files") or []
+        result = self._pick_best_video(identifier, files)
+        if not result:
+            log.info("metadata %s: no playable video in %d files",
+                     identifier, len(files))
         _CACHE.put(identifier, result)
         return result
 
@@ -100,8 +109,6 @@ class MetadataFetcher:
             if not name:
                 continue
             low = name.lower()
-            if _TRAILER_RE.search(_normalize_filename(name)):
-                continue
             fmt = (f.get("format") or "").strip().lower()
             is_video = (any(low.endswith(e) for e in _VIDEO_EXTS)
                         or any(m in fmt for m in _VIDEO_FORMAT_MARKERS))
@@ -111,10 +118,27 @@ class MetadataFetcher:
                 size = int(f.get("size") or 0)
             except (ValueError, TypeError):
                 size = 0
-            if size <= 0 or size < _MIN_FULL_MOVIE_BYTES:
+            if size <= 0:
                 continue
             if size > config.ARCHIVE_ORG_MAX_FILE_SIZE:
                 continue
+
+            # Трейлер отбрасываем только если ОБА признака: имя намекает
+            # на трейлер И файл меньше 50 MB. Если имя "trailer" но файл
+            # большой — это скорее всего полный фильм, не отбрасываем.
+            norm_name = _normalize_filename(name)
+            trailer_by_name = bool(_TRAILER_RE.search(norm_name))
+            is_small = size < _TRAILER_SIZE_BYTES
+            if trailer_by_name and is_small:
+                continue
+
+            if size < _MIN_FULL_MOVIE_BYTES:
+                log.debug(
+                    "metadata %s: '%s' too small (%.1f MB < %.1f MB), skip",
+                    identifier, name, size / 1e6, _MIN_FULL_MOVIE_BYTES / 1e6,
+                )
+                continue
+
             if best is None or size > best[0]:
                 best = (size, name, fmt)
 
