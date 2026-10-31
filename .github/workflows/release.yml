@@ -1,3 +1,7 @@
+# Amagi-Player — desktop media player for public-domain content
+# Copyright (C) 2026 AkashaForge
+# GPLv3 — see LICENSE
+
 name: Build and Release
 
 on:
@@ -7,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (e.g., v2.2.1)"
+        description: "Tag to release (e.g., v2.2.2)"
         required: true
         type: string
 
@@ -18,16 +22,16 @@ jobs:
   build-windows:
     name: Build Windows (standalone ZIP)
     runs-on: windows-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
 
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b
+        uses: actions/setup-python@v5
         with:
           python-version: "3.13"
           cache: "pip"
@@ -52,19 +56,43 @@ jobs:
           pip install -r requirements.txt
           pip install nuitka ordered-set zstandard
 
+          Write-Host "== Verify imports ==" -ForegroundColor Cyan
           python -c "import PyQt6.QtWidgets; print('PyQt6 widgets OK')"
           python -c "import PyQt6.QtMultimedia; print('PyQt6 multimedia OK')"
-          python -c "import PyQt6.QtWebEngineWidgets; print('WebEngine OK')"
+          python -c "import PyQt6.QtMultimediaWidgets; print('PyQt6 multimedia widgets OK')"
+          python -c "import PyQt6.QtWebEngineCore; print('PyQt6 WebEngineCore OK')"
+          python -c "import PyQt6.QtWebEngineWidgets; print('PyQt6 WebEngineWidgets OK')"
           python -c "import libtorrent; print('libtorrent OK')"
           python -c "import aiohttp; print('aiohttp OK')"
           python -c "import qasync, psutil, websockets, nodriver; print('rest OK')"
+
+      - name: Diagnose Qt plugins (info)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pluginsPath = (& python -c "from PyQt6.QtCore import QLibraryInfo; print(QLibraryInfo.path(QLibraryInfo.LibraryPath.PluginsPath))").Trim()
+          Write-Host "Qt plugins path: $pluginsPath" -ForegroundColor Cyan
+          foreach ($sub in @("multimedia","platforms","imageformats","iconengines","styles","tls")) {
+            $p = Join-Path $pluginsPath $sub
+            if (Test-Path $p) {
+              $dlls = Get-ChildItem $p -Filter "*.dll" -ErrorAction SilentlyContinue
+              Write-Host ("[INFO] {0,-15} {1,3} dll" -f $sub, $dlls.Count) -ForegroundColor Cyan
+            } else {
+              Write-Host ("[WARN] {0} MISSING at {1}" -f $sub, $p) -ForegroundColor Yellow
+            }
+          }
+          $pyqt6Dir = (& python -c "import PyQt6, os; print(os.path.dirname(PyQt6.__file__))").Trim()
+          Write-Host "`n== Search *mediaplugin.dll under PyQt6 ==" -ForegroundColor Cyan
+          Get-ChildItem $pyqt6Dir -Recurse -Filter "*mediaplugin.dll" -ErrorAction SilentlyContinue |
+            Select-Object FullName | Format-Table
 
       - name: Sanity-check whitelist_seed.db
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $count = (& python -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('SELECT COUNT(*) FROM movie_whitelist').fetchone()[0])" "data/whitelist_seed.db").Trim()
-          Write-Host "[OK] whitelist_seed.db: $count films"
+          $withIa = (& python -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('SELECT COUNT(*) FROM movie_whitelist WHERE length(archive_identifier) > 0').fetchone()[0])" "data/whitelist_seed.db").Trim()
+          Write-Host "whitelist_seed.db: $count films, $withIa with archive_identifier" -ForegroundColor Cyan
           if ([int]$count -eq 0) { throw "whitelist_seed.db empty" }
 
       - name: Determine version
@@ -115,28 +143,53 @@ jobs:
           & python -c "import sqlite3; c=sqlite3.connect('data/whitelist.db'); c.execute('UPDATE movie_whitelist SET available=1 WHERE available IS NULL'); c.commit(); c.close()"
           Write-Host "[OK] data/whitelist.db prepared"
 
-      - name: Build standalone
+      # ==================== BUILD ====================
+      - name: Build with Nuitka (standalone)
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $v4 = "${{ steps.version.outputs.version4 }}"
           if (Test-Path "dist") { Remove-Item "dist" -Recurse -Force }
 
-          $args = @(
+          # Принудительно включаем всё нужное — даже если Nuitka что-то
+          # не подхватил автоматически.
+          $nuitkaArgs = @(
             "--standalone"
+
+            # ---- PyQt6 core ----
             "--enable-plugin=pyqt6"
             "--include-package=PyQt6"
-            "--include-qt-plugins=multimedia"
+            "--include-module=PyQt6.QtCore"
+            "--include-module=PyQt6.QtGui"
+            "--include-module=PyQt6.QtWidgets"
+            "--include-module=PyQt6.QtNetwork"
+            "--include-module=PyQt6.QtSvg"
+
+            # ---- QtMultimedia (видео + аудио) ----
+            "--include-module=PyQt6.QtMultimedia"
+            "--include-module=PyQt6.QtMultimediaWidgets"
+
+            # ---- QtWebEngine (для Jackett setup) ----
             "--include-module=PyQt6.QtWebEngineCore"
             "--include-module=PyQt6.QtWebEngineWidgets"
+            "--include-module=PyQt6.QtWebChannel"
+
+            # ---- Qt QSS / стили ----
+            "--include-qt-plugins=multimedia,platforms,imageformats,iconengines,styles,tls"
+
+            # ---- Прочие пакеты проекта ----
             "--include-package=libtorrent"
             "--include-package=aiohttp"
             "--include-package=websockets"
             "--include-package=qasync"
             "--include-package=psutil"
             "--include-package=nodriver"
+
+            # ---- Данные проекта ----
             "--include-data-dir=data=data"
             "--include-data-dir=ui=ui"
+
+            # ---- Метаданные EXE ----
             "--windows-console-mode=force"
             "--windows-icon-from-ico=assets/icon.ico"
             "--output-dir=dist"
@@ -148,26 +201,66 @@ jobs:
             "--product-version=$v4"
             "--file-description=Amagi-Player"
             "--copyright=Copyright (C) 2026 AkashaForge. GPLv3."
+
             "--report=dist/nuitka-report.xml"
             "main.py"
           )
-          python -m nuitka @args
-          if ($LASTEXITCODE -ne 0) { throw "nuitka standalone failed" }
 
-      - name: Verify build
+          Write-Host ""
+          Write-Host "python -m nuitka $($nuitkaArgs -join ' ')" -ForegroundColor Gray
+          Write-Host ""
+          python -m nuitka @nuitkaArgs
+          if ($LASTEXITCODE -ne 0) { throw "nuitka failed" }
+
+      # ==================== HARD VERIFY ====================
+      - name: Verify build (hard checks — FAIL if anything missing)
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $distDir = Get-ChildItem "dist" -Directory -Filter "*.dist" | Select-Object -First 1
           if (-not $distDir) { throw "no .dist folder in dist/" }
           $d = $distDir.FullName
-          if (-not (Test-Path "$d\Amagi-Player.exe"))       { throw "exe missing" }
-          if (-not (Test-Path "$d\data\whitelist.db"))      { throw "data/whitelist.db missing in .dist" }
-          if (-not (Test-Path "$d\data\whitelist_seed.db")) { throw "data/whitelist_seed.db missing in .dist" }
-          if (-not (Test-Path "$d\ui\styles.qss"))          { throw "ui/styles.qss missing in .dist" }
-          $mb = [math]::Round((Get-ChildItem $d -Recurse | Measure-Object Length -Sum).Sum / 1MB, 1)
-          Write-Host "[OK] built: $($distDir.Name) ($mb MB)"
+          Write-Host "dist: $d"
 
+          $exe = Join-Path $d "Amagi-Player.exe"
+          if (-not (Test-Path $exe)) { throw "Amagi-Player.exe missing in .dist" }
+          $mb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
+          $totalMb = [math]::Round((Get-ChildItem $d -Recurse | Measure-Object Length -Sum).Sum / 1MB, 1)
+          Write-Host "[OK] exe: $mb MB | total: $totalMb MB" -ForegroundColor Green
+
+          # --- data files ---
+          if (-not (Test-Path (Join-Path $d "data\whitelist.db")))      { throw "data/whitelist.db missing in .dist" }
+          if (-not (Test-Path (Join-Path $d "data\whitelist_seed.db"))) { throw "data/whitelist_seed.db missing in .dist" }
+          if (-not (Test-Path (Join-Path $d "ui\styles.qss")))          { throw "ui/styles.qss missing in .dist" }
+          Write-Host "[OK] data/whitelist.db, data/whitelist_seed.db, ui/styles.qss present" -ForegroundColor Green
+
+          # --- Qt multimedia plugin DLL ---
+          $mmFiles = Get-ChildItem $d -Recurse -Filter "*mediaplugin.dll" -ErrorAction SilentlyContinue
+          if ($mmFiles.Count -eq 0) {
+            Write-Host "--- all *.dll matching *media* ---" -ForegroundColor Yellow
+            Get-ChildItem $d -Recurse -Filter "*media*" | Select-Object FullName | Format-Table
+            throw "NO multimedia plugin DLL in .dist — QMediaPlayer will crash"
+          }
+          Write-Host "[OK] multimedia plugins: $($mmFiles.Count)" -ForegroundColor Green
+          $mmFiles | Select-Object Name | Format-Table
+
+          # --- ffmpeg backend DLL ---
+          $ffmpegDlls = Get-ChildItem $d -Recurse -Filter "avcodec-*.dll" -ErrorAction SilentlyContinue
+          if ($ffmpegDlls.Count -eq 0) {
+            Write-Host "--- all *.dll matching av* ---" -ForegroundColor Yellow
+            Get-ChildItem $d -Recurse -Filter "av*.dll" | Select-Object FullName | Format-Table
+            throw "NO avcodec-*.dll in .dist — QtMultimedia ffmpeg backend will not work"
+          }
+          Write-Host "[OK] ffmpeg backend: $($ffmpegDlls.Count) dll" -ForegroundColor Green
+
+          # --- Qt platform plugin ---
+          $platformDlls = Get-ChildItem $d -Recurse -Filter "qwindows.dll" -ErrorAction SilentlyContinue
+          if ($platformDlls.Count -eq 0) {
+            throw "NO qwindows.dll (Qt platform plugin) in .dist"
+          }
+          Write-Host "[OK] qwindows.dll present" -ForegroundColor Green
+
+      # ==================== DISTRIBUTION ====================
       - name: Prepare distribution
         shell: pwsh
         run: |
@@ -220,10 +313,10 @@ jobs:
           if (Test-Path $zip) { Remove-Item $zip -Force }
           Compress-Archive -Path "$distDir/*" -DestinationPath $zip -Force
           $mb = [math]::Round((Get-Item $zip).Length / 1MB, 1)
-          Write-Host "[OK] $zip ($mb MB)"
+          Write-Host "[OK] $zip ($mb MB)" -ForegroundColor Green
 
       - name: Upload artifact
-        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b
+        uses: actions/upload-artifact@v4
         with:
           name: windows-release
           path: |
@@ -234,11 +327,11 @@ jobs:
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: "Amagi-Player ${{ steps.version.outputs.tag }}"
           generate_release_notes: true
-          files: dist/Amagi-Player-v${{ steps.version.outputs.output_version || steps.version.outputs.version }}-windows.zip
+          files: dist/Amagi-Player-v${{ steps.version.outputs.version }}-windows.zip
           draft: false
           prerelease: ${{ contains(github.ref_name, 'beta') }}
