@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (e.g., v2.2.2)"
+        description: "Tag to release (e.g., v2.2.3)"
         required: true
         type: string
 
@@ -56,35 +56,20 @@ jobs:
           pip install -r requirements.txt
           pip install nuitka ordered-set zstandard
 
-          Write-Host "== Verify imports ==" -ForegroundColor Cyan
-          python -c "import PyQt6.QtWidgets; print('PyQt6 widgets OK')"
-          python -c "import PyQt6.QtMultimedia; print('PyQt6 multimedia OK')"
-          python -c "import PyQt6.QtMultimediaWidgets; print('PyQt6 multimedia widgets OK')"
-          python -c "import PyQt6.QtWebEngineCore; print('PyQt6 WebEngineCore OK')"
-          python -c "import PyQt6.QtWebEngineWidgets; print('PyQt6 WebEngineWidgets OK')"
-          python -c "import libtorrent; print('libtorrent OK')"
+          Write-Host "== Verify all third-party imports ==" -ForegroundColor Cyan
+          python -c "import PyQt6.QtWidgets; print('PyQt6.QtWidgets OK')"
+          python -c "import PyQt6.QtMultimedia; print('PyQt6.QtMultimedia OK')"
+          python -c "import PyQt6.QtMultimediaWidgets; print('PyQt6.QtMultimediaWidgets OK')"
+          python -c "import PyQt6.QtWebEngineWidgets; print('PyQt6.QtWebEngineWidgets OK')"
           python -c "import aiohttp; print('aiohttp OK')"
-          python -c "import qasync, psutil, websockets, nodriver; print('rest OK')"
-
-      - name: Diagnose Qt plugins (info)
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $pluginsPath = (& python -c "from PyQt6.QtCore import QLibraryInfo; print(QLibraryInfo.path(QLibraryInfo.LibraryPath.PluginsPath))").Trim()
-          Write-Host "Qt plugins path: $pluginsPath" -ForegroundColor Cyan
-          foreach ($sub in @("multimedia","platforms","imageformats","iconengines","styles","tls")) {
-            $p = Join-Path $pluginsPath $sub
-            if (Test-Path $p) {
-              $dlls = Get-ChildItem $p -Filter "*.dll" -ErrorAction SilentlyContinue
-              Write-Host ("[INFO] {0,-15} {1,3} dll" -f $sub, $dlls.Count) -ForegroundColor Cyan
-            } else {
-              Write-Host ("[WARN] {0} MISSING at {1}" -f $sub, $p) -ForegroundColor Yellow
-            }
-          }
-          $pyqt6Dir = (& python -c "import PyQt6, os; print(os.path.dirname(PyQt6.__file__))").Trim()
-          Write-Host "`n== Search *mediaplugin.dll under PyQt6 ==" -ForegroundColor Cyan
-          Get-ChildItem $pyqt6Dir -Recurse -Filter "*mediaplugin.dll" -ErrorAction SilentlyContinue |
-            Select-Object FullName | Format-Table
+          python -c "import cloudscraper; print('cloudscraper OK')"
+          python -c "import curl_cffi.requests; print('curl_cffi OK')"
+          python -c "import defusedxml; print('defusedxml OK')"
+          python -c "import libtorrent; print('libtorrent OK')"
+          python -c "import nodriver; print('nodriver OK')"
+          python -c "import psutil; print('psutil OK')"
+          python -c "import qasync; print('qasync OK')"
+          python -c "import websockets.exceptions; print('websockets OK')"
 
       - name: Sanity-check whitelist_seed.db
         shell: pwsh
@@ -143,7 +128,6 @@ jobs:
           & python -c "import sqlite3; c=sqlite3.connect('data/whitelist.db'); c.execute('UPDATE movie_whitelist SET available=1 WHERE available IS NULL'); c.commit(); c.close()"
           Write-Host "[OK] data/whitelist.db prepared"
 
-      # ==================== BUILD ====================
       - name: Build with Nuitka (standalone)
         shell: pwsh
         run: |
@@ -151,45 +135,43 @@ jobs:
           $v4 = "${{ steps.version.outputs.version4 }}"
           if (Test-Path "dist") { Remove-Item "dist" -Recurse -Force }
 
-          # Принудительно включаем всё нужное — даже если Nuitka что-то
-          # не подхватил автоматически.
           $nuitkaArgs = @(
             "--standalone"
 
-            # ---- PyQt6 core ----
+            # ---- PyQt6 plugin + package ----
             "--enable-plugin=pyqt6"
             "--include-package=PyQt6"
+
+            # ---- PyQt6 submodules (used in code) ----
             "--include-module=PyQt6.QtCore"
             "--include-module=PyQt6.QtGui"
             "--include-module=PyQt6.QtWidgets"
             "--include-module=PyQt6.QtNetwork"
-            "--include-module=PyQt6.QtSvg"
-
-            # ---- QtMultimedia (видео + аудио) ----
             "--include-module=PyQt6.QtMultimedia"
             "--include-module=PyQt6.QtMultimediaWidgets"
-
-            # ---- QtWebEngine (для Jackett setup) ----
             "--include-module=PyQt6.QtWebEngineCore"
             "--include-module=PyQt6.QtWebEngineWidgets"
             "--include-module=PyQt6.QtWebChannel"
 
-            # ---- Qt QSS / стили ----
+            # ---- Qt native plugins (multimedia/ffmpeg, platform, images) ----
             "--include-qt-plugins=multimedia,platforms,imageformats,iconengines,styles,tls"
 
-            # ---- Прочие пакеты проекта ----
-            "--include-package=libtorrent"
+            # ---- Third-party packages found in code ----
             "--include-package=aiohttp"
-            "--include-package=websockets"
-            "--include-package=qasync"
-            "--include-package=psutil"
+            "--include-package=cloudscraper"
+            "--include-package=curl_cffi"
+            "--include-package=defusedxml"
+            "--include-package=libtorrent"
             "--include-package=nodriver"
+            "--include-package=psutil"
+            "--include-package=qasync"
+            "--include-package=websockets"
 
-            # ---- Данные проекта ----
+            # ---- Project data ----
             "--include-data-dir=data=data"
             "--include-data-dir=ui=ui"
 
-            # ---- Метаданные EXE ----
+            # ---- EXE metadata ----
             "--windows-console-mode=force"
             "--windows-icon-from-ico=assets/icon.ico"
             "--output-dir=dist"
@@ -212,8 +194,7 @@ jobs:
           python -m nuitka @nuitkaArgs
           if ($LASTEXITCODE -ne 0) { throw "nuitka failed" }
 
-      # ==================== HARD VERIFY ====================
-      - name: Verify build (hard checks — FAIL if anything missing)
+      - name: Verify build (hard checks)
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -223,44 +204,44 @@ jobs:
           Write-Host "dist: $d"
 
           $exe = Join-Path $d "Amagi-Player.exe"
-          if (-not (Test-Path $exe)) { throw "Amagi-Player.exe missing in .dist" }
+          if (-not (Test-Path $exe)) { throw "Amagi-Player.exe missing" }
           $mb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
           $totalMb = [math]::Round((Get-ChildItem $d -Recurse | Measure-Object Length -Sum).Sum / 1MB, 1)
           Write-Host "[OK] exe: $mb MB | total: $totalMb MB" -ForegroundColor Green
 
-          # --- data files ---
-          if (-not (Test-Path (Join-Path $d "data\whitelist.db")))      { throw "data/whitelist.db missing in .dist" }
-          if (-not (Test-Path (Join-Path $d "data\whitelist_seed.db"))) { throw "data/whitelist_seed.db missing in .dist" }
-          if (-not (Test-Path (Join-Path $d "ui\styles.qss")))          { throw "ui/styles.qss missing in .dist" }
-          Write-Host "[OK] data/whitelist.db, data/whitelist_seed.db, ui/styles.qss present" -ForegroundColor Green
+          # data files
+          if (-not (Test-Path (Join-Path $d "data\whitelist.db")))      { throw "data/whitelist.db missing" }
+          if (-not (Test-Path (Join-Path $d "data\whitelist_seed.db"))) { throw "data/whitelist_seed.db missing" }
+          if (-not (Test-Path (Join-Path $d "ui\styles.qss")))          { throw "ui/styles.qss missing" }
+          Write-Host "[OK] data + ui files present" -ForegroundColor Green
 
-          # --- Qt multimedia plugin DLL ---
-          $mmFiles = Get-ChildItem $d -Recurse -Filter "*mediaplugin.dll" -ErrorAction SilentlyContinue
-          if ($mmFiles.Count -eq 0) {
-            Write-Host "--- all *.dll matching *media* ---" -ForegroundColor Yellow
-            Get-ChildItem $d -Recurse -Filter "*media*" | Select-Object FullName | Format-Table
-            throw "NO multimedia plugin DLL in .dist — QMediaPlayer will crash"
+          # third-party packages must be importable from .dist
+          foreach ($mod in @("defusedxml","curl_cffi","cloudscraper","aiohttp","libtorrent","nodriver","psutil","qasync","websockets")) {
+            $found = Get-ChildItem $d -Recurse -Directory -Filter $mod -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $found) {
+              # some modules ship as single .pyd/.dll — check for that too
+              $pyd = Get-ChildItem $d -Recurse -Filter "$mod*.pyd" -ErrorAction SilentlyContinue | Select-Object -First 1
+              if (-not $pyd) { throw "package '$mod' not found in .dist" }
+            }
           }
-          Write-Host "[OK] multimedia plugins: $($mmFiles.Count)" -ForegroundColor Green
-          $mmFiles | Select-Object Name | Format-Table
+          Write-Host "[OK] all third-party packages present in .dist" -ForegroundColor Green
 
-          # --- ffmpeg backend DLL ---
-          $ffmpegDlls = Get-ChildItem $d -Recurse -Filter "avcodec-*.dll" -ErrorAction SilentlyContinue
-          if ($ffmpegDlls.Count -eq 0) {
-            Write-Host "--- all *.dll matching av* ---" -ForegroundColor Yellow
-            Get-ChildItem $d -Recurse -Filter "av*.dll" | Select-Object FullName | Format-Table
-            throw "NO avcodec-*.dll in .dist — QtMultimedia ffmpeg backend will not work"
-          }
-          Write-Host "[OK] ffmpeg backend: $($ffmpegDlls.Count) dll" -ForegroundColor Green
+          # Qt multimedia plugin
+          $mm = Get-ChildItem $d -Recurse -Filter "*mediaplugin.dll" -ErrorAction SilentlyContinue
+          if ($mm.Count -eq 0) { throw "NO multimedia plugin DLL in .dist" }
+          Write-Host "[OK] multimedia plugins: $($mm.Count)" -ForegroundColor Green
 
-          # --- Qt platform plugin ---
-          $platformDlls = Get-ChildItem $d -Recurse -Filter "qwindows.dll" -ErrorAction SilentlyContinue
-          if ($platformDlls.Count -eq 0) {
-            throw "NO qwindows.dll (Qt platform plugin) in .dist"
+          # ffmpeg backend
+          $ff = Get-ChildItem $d -Recurse -Filter "avcodec-*.dll" -ErrorAction SilentlyContinue
+          if ($ff.Count -eq 0) { throw "NO avcodec-*.dll in .dist" }
+          Write-Host "[OK] ffmpeg backend: $($ff.Count) dll" -ForegroundColor Green
+
+          # Qt platform
+          if (-not (Get-ChildItem $d -Recurse -Filter "qwindows.dll" -ErrorAction SilentlyContinue)) {
+            throw "NO qwindows.dll in .dist"
           }
           Write-Host "[OK] qwindows.dll present" -ForegroundColor Green
 
-      # ==================== DISTRIBUTION ====================
       - name: Prepare distribution
         shell: pwsh
         run: |
