@@ -1,4 +1,4 @@
-"""IA metadata: LRU-кэш + поиск видеофайла."""
+"""IA metadata: LRU-кэш + поиск видеофайла с приоритетом форматов."""
 import asyncio
 import re
 import time
@@ -14,23 +14,35 @@ log = get_logger("archive_org.metadata")
 _METADATA_URL = "https://archive.org/metadata/{identifier}"
 _DOWNLOAD_URL = "https://archive.org/download/{identifier}/{filename}"
 
-_VIDEO_EXTS = (".mp4", ".mkv", ".webm", ".avi", ".mov", ".m4v", ".ogv", ".mpg")
+_VIDEO_EXTS = (".mp4", ".mkv", ".webm", ".avi", ".mov", ".m4v", ".ogv", ".mpg", ".mpeg", ".wmv")
 _VIDEO_FORMAT_MARKERS = (
     "mpeg4", "h.264", "matroska", "ogg video", "mpeg2",
     "quicktime", "windows media", "divx", "xvid", "webm", "avi",
 )
 
-# "trailer"/"teaser"/"making of" — реально трейлеры. "clip" НЕ включён:
-# на IA старые фильмы часто залиты с "clip" в имени, хотя это полный фильм.
+# Приоритет форматов для HTTP-стриминга:
+# mp4/webm/mkv — progressive-friendly, seek работает.
+# mpeg/mpg/wmv/vob — DVD-образы с navigation packets, seek ломается.
+_FORMAT_PRIORITY = {
+    ".mp4":  100,
+    ".webm": 95,
+    ".mkv":  90,
+    ".m4v":  85,
+    ".ogv":  50,
+    ".mov":  40,
+    ".avi":  20,
+    ".wmv":  15,
+    ".mpg":  5,
+    ".mpeg": 3,
+}
+_STREAMING_UNFRIENDLY = {".mpeg", ".mpg", ".wmv"}
+
 _TRAILER_RE = re.compile(
     r'\b(?:trailer|teaser|making\s+of|behind\s+the\s+scenes)\b',
     re.IGNORECASE,
 )
 
-# Файл меньше 50 MB с "trailer" в имени — точно трейлер. Больше — это
-# скорее всего полный фильм, залитый криворуко.
 _TRAILER_SIZE_BYTES = 50 * 1024 * 1024
-
 _MIN_FULL_MOVIE_BYTES = config.ARCHIVE_ORG_MIN_MOVIE_SIZE
 
 
@@ -103,7 +115,7 @@ class MetadataFetcher:
 
     @staticmethod
     def _pick_best_video(identifier: str, files: list[dict]) -> dict | None:
-        best = None
+        candidates = []
         for f in files:
             name = (f.get("name") or "").strip()
             if not name:
@@ -123,9 +135,6 @@ class MetadataFetcher:
             if size > config.ARCHIVE_ORG_MAX_FILE_SIZE:
                 continue
 
-            # Трейлер отбрасываем только если ОБА признака: имя намекает
-            # на трейлер И файл меньше 50 MB. Если имя "trailer" но файл
-            # большой — это скорее всего полный фильм, не отбрасываем.
             norm_name = _normalize_filename(name)
             trailer_by_name = bool(_TRAILER_RE.search(norm_name))
             is_small = size < _TRAILER_SIZE_BYTES
@@ -133,23 +142,35 @@ class MetadataFetcher:
                 continue
 
             if size < _MIN_FULL_MOVIE_BYTES:
-                log.debug(
-                    "metadata %s: '%s' too small (%.1f MB < %.1f MB), skip",
-                    identifier, name, size / 1e6, _MIN_FULL_MOVIE_BYTES / 1e6,
-                )
                 continue
 
-            if best is None or size > best[0]:
-                best = (size, name, fmt)
+            ext = next((e for e in _VIDEO_EXTS if low.endswith(e)), "")
+            priority = _FORMAT_PRIORITY.get(ext, 0)
+            candidates.append((priority, size, name, fmt, ext))
 
-        if not best:
+        if not candidates:
             return None
-        size, name, fmt = best
+
+        # Сначала пробуем "удобные" форматы (priority >= 40).
+        # Если таких нет — берём всё, что есть (лучше что-то, чем ничего).
+        friendly = [c for c in candidates if c[0] >= 40]
+        pool = friendly if friendly else candidates
+
+        # Сортировка: приоритет формата ВАЖНЕЕ размера
+        pool.sort(key=lambda c: (c[0], c[1]), reverse=True)
+        priority, size, name, fmt, ext = pool[0]
+
+        if ext in _STREAMING_UNFRIENDLY:
+            log.info("metadata %s: only unfriendly format %s available (no mp4/webm/mkv)",
+                     identifier, ext)
+
         return {
             "url": _DOWNLOAD_URL.format(identifier=identifier, filename=name),
             "size": size,
             "format": fmt,
             "filename": name,
+            "ext": ext,
+            "priority": priority,
         }
 
     async def find_videos_parallel(self, identifiers: list[str]) -> dict[str, dict]:

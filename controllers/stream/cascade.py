@@ -127,7 +127,10 @@ class CascadeExecutor:
                 if self.main_window.screen_stack.currentIndex() == 2:
                     self.main_window.screen_stack.setCurrentIndex(1)
                 return
-            direct.sort(key=lambda s: s.get("size", 0) or 0, reverse=True)
+            direct.sort(
+                key=lambda s: (s.get("priority", 0), s.get("size", 0) or 0),
+                reverse=True,
+            )
             chosen = direct[0]
             log.info("PUBLIC: %s", chosen["url"][:80])
             self.main_window.player_page.set_buffering_progress(100)
