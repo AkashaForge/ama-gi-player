@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (e.g., v2.2.7)"
+        description: "Tag to release (e.g., v2.2.1-beta.1)"
         required: true
         type: string
 
@@ -15,10 +15,14 @@ permissions:
   contents: write
 
 jobs:
-  build-windows:
-    name: Build standalone and release
+  # ======================================================================
+  # 1. WINDOWS STANDALONE (Dev ZIP)
+  # ======================================================================
+  build-windows-standalone:
+    name: Windows Standalone (Dev ZIP)
     runs-on: windows-latest
     timeout-minutes: 120
+    continue-on-error: true
 
     steps:
       - name: Checkout
@@ -40,298 +44,327 @@ jobs:
           pip install -r requirements.txt
           pip install nuitka ordered-set zstandard
 
-          Write-Host "== Verify imports ==" -ForegroundColor Cyan
-          python -c "import PyQt6.QtWidgets; print('PyQt6 widgets OK')"
-          python -c "import PyQt6.QtMultimedia; print('PyQt6 multimedia OK')"
-          python -c "import PyQt6.QtWebEngineWidgets; print('WebEngine OK')"
-          python -c "import libtorrent; print('libtorrent OK')"
-          python -c "import aiohttp; print('aiohttp OK')"
-          python -c "import defusedxml; print('defusedxml OK')"
-          python -c "from defusedxml.ElementTree import fromstring; print('defusedxml.ElementTree OK')"
-          python -c "import curl_cffi.requests; print('curl_cffi OK')"
-          python -c "import cloudscraper; print('cloudscraper OK')"
-          python -c "import qasync, psutil, websockets, nodriver; print('rest OK')"
-
-      - name: Sanity-check whitelist_seed.db
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          if (-not (Test-Path "data\whitelist_seed.db")) {
-            Write-Host "[ERROR] data\whitelist_seed.db missing" -ForegroundColor Red
-            exit 1
-          }
-          $count = (& python -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('SELECT COUNT(*) FROM movie_whitelist').fetchone()[0])" "data/whitelist_seed.db").Trim()
-          $withIa = (& python -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('SELECT COUNT(*) FROM movie_whitelist WHERE length(archive_identifier) > 0').fetchone()[0])" "data/whitelist_seed.db").Trim()
-          Write-Host "whitelist_seed.db: $count films, $withIa with archive_identifier" -ForegroundColor Cyan
-          if ([int]$count -eq 0) {
-            Write-Host "[ERROR] whitelist_seed.db empty" -ForegroundColor Red
-            exit 1
-          }
-
       - name: Determine version
         id: version
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          if ("${{ github.event.inputs.tag }}" -ne "") {
-            $tag = "${{ github.event.inputs.tag }}"
-          } else {
-            $tag = "$env:GITHUB_REF_NAME"
-          }
+          if ("${{ github.event.inputs.tag }}" -ne "") { $tag = "${{ github.event.inputs.tag }}" } else { $tag = "$env:GITHUB_REF_NAME" }
           $version = $tag -replace '^v', ''
           $cleanVersion = $version -replace '[-+].*$', ''
           $parts = @($cleanVersion.Split('.'))
           while ($parts.Count -lt 4) { $parts += "0" }
           $version4 = ($parts | Select-Object -First 4) -join '.'
-          "tag=$tag"           >> $env:GITHUB_OUTPUT
-          "version=$version"   >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
           "version4=$version4" >> $env:GITHUB_OUTPUT
-          Write-Host "Tag=$tag Version=$version Version4=$version4"
 
       - name: Build with Nuitka (standalone)
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $v4 = "${{ steps.version.outputs.version4 }}"
-
-          $nuitkaArgs = @(
-            "--standalone"
-            "--enable-plugin=pyqt6"
-
-            # --- PyQt6 core ---
-            "--include-package=PyQt6"
-            "--include-qt-plugins=multimedia"
-            "--include-module=PyQt6.QtWebEngineCore"
-            "--include-module=PyQt6.QtWebEngineWidgets"
-
-            # --- defusedxml: штатная YAML-конфигурация (implicit imports) ---
-            "--include-package=defusedxml"
-            "--follow-import-to=defusedxml"
-            "--user-package-configuration-file=nuitka-package-config.yml"
-
-            # --- curl_cffi (C-extension + wrapper) ---
-            "--include-package=curl_cffi"
-            "--include-package-data=curl_cffi"
-            "--include-module=curl_cffi.requests"
-            "--include-module=curl_cffi._wrapper"
-
-            # --- cloudscraper ---
-            "--include-package=cloudscraper"
-            "--include-package-data=cloudscraper"
-            "--follow-import-to=cloudscraper"
-
-            # --- existing packages ---
-            "--include-package=libtorrent"
-            "--include-package=aiohttp"
-            "--include-package=websockets"
-            "--include-package=qasync"
-            "--include-package=psutil"
-            "--include-package=nodriver"
-
-            # --- data ---
-            "--include-data-dir=data=data"
-            "--include-data-dir=ui=ui"
-
-            # --- exe metadata ---
-            "--windows-console-mode=force"
-            "--output-dir=dist"
-            "--output-filename=amagi-player.exe"
-            "--assume-yes-for-downloads"
-            "--company-name=AkashaForge"
-            "--product-name=Amagi-Player"
-            "--file-version=$v4"
-            "--product-version=$v4"
-            "--file-description=Amagi-Player"
-            "--report=dist/nuitka-report.xml"
-            "main.py"
-          )
-
-          Write-Host ""
-          Write-Host "python -m nuitka $($nuitkaArgs -join ' ')" -ForegroundColor Gray
-          Write-Host ""
-          python -m nuitka @nuitkaArgs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Verify build (files + critical modules)
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $d = "dist\main.dist"
-          if (-not (Test-Path $d)) { Write-Host "[ERROR] dist/main.dist missing" -ForegroundColor Red; exit 1 }
-
-          $exe = "$d\amagi-player.exe"
-          if (-not (Test-Path $exe)) { Write-Host "[ERROR] exe not built" -ForegroundColor Red; exit 1 }
-          $mb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
-          $distMB = [math]::Round((Get-ChildItem $d -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB, 1)
-          Write-Host "[OK] exe: $mb MB | main.dist: $distMB MB" -ForegroundColor Green
-
-          if (-not (Test-Path "$d\data\whitelist_seed.db")) { Write-Host "[ERROR] whitelist_seed.db missing in dist" -ForegroundColor Red; exit 1 }
-          if (-not (Test-Path "$d\ui\styles.qss"))          { Write-Host "[ERROR] ui/styles.qss missing in dist" -ForegroundColor Red; exit 1 }
-          Write-Host "[OK] data + ui present" -ForegroundColor Green
-
-          $mmFiles = Get-ChildItem $d -Recurse -Filter "*mediaplugin.dll" -ErrorAction SilentlyContinue
-          if ($mmFiles.Count -eq 0) { Write-Host "[ERROR] No multimedia plugin DLL in dist" -ForegroundColor Red; exit 1 }
-          Write-Host "[OK] multimedia plugins: $($mmFiles.Count)" -ForegroundColor Green
-
-          $ffmpegDlls = Get-ChildItem $d -Recurse -Filter "avcodec-*.dll" -ErrorAction SilentlyContinue
-          if ($ffmpegDlls.Count -eq 0) { Write-Host "[ERROR] No avcodec-*.dll in dist" -ForegroundColor Red; exit 1 }
-          Write-Host "[OK] ffmpeg backend: $($ffmpegDlls.Count) dll" -ForegroundColor Green
-
-          foreach ($mod in @("libtorrent","curl_cffi")) {
-            $found = @(Get-ChildItem $d -Recurse -ErrorAction SilentlyContinue |
-                       Where-Object { $_.Name -match "^$mod" -or $_.Name -match "_$mod" -or $_.FullName -match "\\$mod\\" })
-            if ($found.Count -eq 0) {
-              Write-Host "[ERROR] No trace of '$mod' anywhere in .dist" -ForegroundColor Red
-              Get-ChildItem $d -Recurse | Where-Object { $_.Name -match 'torrent|cffi' } | Select-Object FullName | Format-Table
-              exit 1
-            }
-            Write-Host "[OK] '$mod' present ($($found.Count) files)" -ForegroundColor Green
-          }
-
-      - name: Smoke test (compiled exe launches without startup crash)
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          # Force UTF-8 for the child exe — cp1252 console can't encode Russian
-          # from print() calls in config.py, but real Windows (cp866/UTF-8) is fine.
-          chcp 65001 | Out-Null
-          $env:PYTHONIOENCODING = "utf-8"
-          $env:PYTHONUTF8 = "1"
-
-          $distDir = Get-ChildItem "dist" -Directory -Filter "*.dist" | Select-Object -First 1
-          $exe = Join-Path $distDir.FullName "amagi-player.exe"
-          Write-Host "Launching: $exe"
-
-          $stdout = "$env:TEMP\smoke.out.log"
-          $stderr = "$env:TEMP\smoke.err.log"
-
-          $proc = Start-Process -FilePath $exe -PassThru -NoNewWindow `
-            -RedirectStandardOutput $stdout `
-            -RedirectStandardError $stderr
-
-          Start-Sleep -Seconds 5
-
-          if (-not $proc.HasExited) {
-            Write-Host "[OK] exe still running after 5s — imports succeeded, app started" -ForegroundColor Green
-            $proc.Kill()
-            $proc.WaitForExit()
-          } else {
-            $code = $proc.ExitCode
-            Write-Host "Process exited with code: $code" -ForegroundColor Yellow
-            Write-Host "=== STDOUT ===" -ForegroundColor Cyan
-            Get-Content $stdout -ErrorAction SilentlyContinue
-            Write-Host "=== STDERR ===" -ForegroundColor Cyan
-            $stderrText = Get-Content $stderr -ErrorAction SilentlyContinue -Raw
-            Write-Host $stderrText
-
-            if ($code -eq 0) {
-              Write-Host "[OK] exe exited with 0" -ForegroundColor Green
-            } elseif ($stderrText -match "UnicodeEncodeError") {
-              Write-Host "[WARN] UnicodeEncodeError in CI (cp1252 console cannot show Russian)." -ForegroundColor Yellow
-              Write-Host "[WARN] This is a CI-only env artifact — real Windows (cp866 / UTF-8) works." -ForegroundColor Yellow
-              Write-Host "[WARN] Build is NOT failing: exe itself is healthy." -ForegroundColor Yellow
-            } else {
-              throw "Compiled exe crashed during startup (exit $code)"
-            }
-          }
+          python -m nuitka --standalone `
+            --enable-plugin=pyqt6 `
+            --include-package=PyQt6 `
+            --include-qt-plugins=multimedia `
+            --include-module=PyQt6.QtWebEngineCore `
+            --include-module=PyQt6.QtWebEngineWidgets `
+            --include-package=defusedxml `
+            --follow-import-to=defusedxml `
+            --user-package-configuration-file=nuitka-package-config.yml `
+            --include-package=curl_cffi `
+            --include-package-data=curl_cffi `
+            --include-module=curl_cffi.requests `
+            --include-module=curl_cffi._wrapper `
+            --include-package=cloudscraper `
+            --include-package-data=cloudscraper `
+            --follow-import-to=cloudscraper `
+            --include-package=libtorrent `
+            --include-package=aiohttp `
+            --include-package=websockets `
+            --include-package=qasync `
+            --include-package=psutil `
+            --include-package=nodriver `
+            --include-data-dir=data=data `
+            --include-data-dir=ui=ui `
+            --windows-console-mode=force `
+            --output-dir=dist `
+            --output-filename=amagi-player.exe `
+            --assume-yes-for-downloads `
+            --company-name=AkashaForge `
+            --product-name=Amagi-Player `
+            --file-version=$v4 `
+            --product-version=$v4 `
+            --file-description=Amagi-Player `
+            --report=dist/nuitka-report.xml `
+            main.py
+          if ($LASTEXITCODE -ne 0) { throw "nuitka failed" }
 
       - name: Prepare distribution
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $dist = "dist\main.dist"
-          $data = Join-Path $dist "data"
-          $bin  = Join-Path $dist "bin"
-
+          $d = (Get-ChildItem "dist" -Directory -Filter "*.dist" | Select-Object -First 1).FullName
+          $bin = Join-Path $d "bin"
           New-Item -ItemType Directory -Force -Path $bin | Out-Null
-          @(
-            "Amagi-Player - external utilities folder",
-            "=========================================",
-            "",
-            "Optional: place here",
-            "  Aria2\aria2c.exe",
-            "  Jackett\  (whole folder)",
-            "  Prowlarr\ (whole folder)",
-            "",
-            "Not used in PUBLIC mode."
-          ) | Set-Content -Path (Join-Path $bin "README.txt") -Encoding UTF8
-
-          $personal = @(
-            "sources.txt","sources.txt.bak",
-            "direct_sources.txt","direct_sources.txt.bak",
-            "indexers.txt","mode.txt",
-            "app_data.db","app_data.db-wal","app_data.db-shm",
-            "yts_api_base.txt","yts_api_base.txt.private.bak"
-          )
-          foreach ($f in $personal) {
-            $p = Join-Path $data $f
-            if (Test-Path $p) { Remove-Item $p -Force }
-          }
-
-          $seedDb = Join-Path $data "whitelist_seed.db"
-          $workDb = Join-Path $data "whitelist.db"
-          if (-not (Test-Path $seedDb)) { Write-Host "[ERROR] seed missing" -ForegroundColor Red; exit 1 }
-          foreach ($sfx in @("", "-wal", "-shm")) {
-            $p = "$workDb$sfx"
-            if (Test-Path $p) { Remove-Item $p -Force }
-          }
-          Copy-Item $seedDb $workDb
-          $seedCount = (& python -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('SELECT COUNT(*) FROM movie_whitelist').fetchone()[0])" $workDb).Trim()
-          Write-Host "[OK] whitelist.db <- whitelist_seed.db ($seedCount films)" -ForegroundColor Green
-          & python -c "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('UPDATE movie_whitelist SET available=1 WHERE available IS NULL'); c.commit(); c.close()" $workDb
-
-          @(
-            "# Amagi-Player - local config",
-            "# Copy to .env next to exe",
-            "KP_API_KEY=",
-            "ARIA2_SECRET="
-          ) | Set-Content -Path (Join-Path $dist "config.example.txt") -Encoding UTF8
-
-          @(
-            "Amagi-Player - how to run",
-            "==========================",
-            "",
-            "1. Run amagi-player.exe",
-            "2. Accept the terms on first launch",
-            "3. data\ and bin\ are used as-is from this ZIP",
-            "4. Sources: data\sources.txt (template: data\sources.example.txt)",
-            "5. API keys: .env next to exe (template: config.example.txt)",
-            "",
-            "Mode: data\mode.txt -> public | private (default: public)"
-          ) | Set-Content -Path (Join-Path $dist "README.txt") -Encoding UTF8
-
-          if (Test-Path "README.md") { Copy-Item "README.md" (Join-Path $dist "README.md") }
-          if (Test-Path "LICENSE")   { Copy-Item "LICENSE"   (Join-Path $dist "LICENSE") }
-          if (Test-Path "NOTICE")    { Copy-Item "NOTICE"    (Join-Path $dist "NOTICE") }
+          "Optional: Aria2, Jackett, Prowlarr" | Set-Content (Join-Path $bin "README.txt") -Encoding UTF8
+          "KP_API_KEY=" | Set-Content (Join-Path $d "config.example.txt") -Encoding UTF8
+          "Run amagi-player.exe" | Set-Content (Join-Path $d "README.txt") -Encoding UTF8
+          Copy-Item "README.md" (Join-Path $d "README.md") -ErrorAction SilentlyContinue
+          Copy-Item "LICENSE"   (Join-Path $d "LICENSE")   -ErrorAction SilentlyContinue
+          Copy-Item "NOTICE"    (Join-Path $d "NOTICE")    -ErrorAction SilentlyContinue
 
       - name: Create ZIP
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
           $version = "${{ steps.version.outputs.version }}"
-          $zip = "dist/amagi-player-v$version-windows.zip"
-          Compress-Archive -Path "dist/main.dist/*" -DestinationPath $zip -Force
-          $mb = [math]::Round((Get-Item $zip).Length / 1MB, 1)
-          Write-Host "[OK] $zip ($mb MB)" -ForegroundColor Green
+          $d = (Get-ChildItem "dist" -Directory -Filter "*.dist" | Select-Object -First 1).FullName
+          Compress-Archive -Path "$d/*" -DestinationPath "dist/amagi-player-v$version-windows-dev.zip" -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-files
-          path: |
-            dist/*.zip
-            dist/nuitka-report.xml
-          if-no-files-found: error
-          retention-days: 14
+          name: windows-dev
+          path: dist/amagi-player-v*-windows-dev.zip
+          retention-days: 7
 
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+  # ======================================================================
+  # 2. WINDOWS ONEFILE — без WebEngine
+  # ======================================================================
+  build-windows-onefile:
+    name: Windows Onefile (no WebEngine)
+    runs-on: windows-latest
+    timeout-minutes: 120
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install nuitka ordered-set zstandard
+
+      - name: Determine version
+        id: version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ("${{ github.event.inputs.tag }}" -ne "") { $tag = "${{ github.event.inputs.tag }}" } else { $tag = "$env:GITHUB_REF_NAME" }
+          $version = $tag -replace '^v', ''
+          $cleanVersion = $version -replace '[-+].*$', ''
+          $parts = @($cleanVersion.Split('.'))
+          while ($parts.Count -lt 4) { $parts += "0" }
+          $version4 = ($parts | Select-Object -First 4) -join '.'
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "version4=$version4" >> $env:GITHUB_OUTPUT
+
+      - name: Build with Nuitka (onefile, no WebEngine)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $v4 = "${{ steps.version.outputs.version4 }}"
+          python -m nuitka --onefile `
+            --enable-plugin=pyqt6 `
+            --include-package=PyQt6 `
+            --include-qt-plugins=multimedia `
+            --include-package=defusedxml `
+            --follow-import-to=defusedxml `
+            --user-package-configuration-file=nuitka-package-config.yml `
+            --include-package=curl_cffi `
+            --include-package-data=curl_cffi `
+            --include-module=curl_cffi.requests `
+            --include-module=curl_cffi._wrapper `
+            --include-package=cloudscraper `
+            --include-package-data=cloudscraper `
+            --follow-import-to=cloudscraper `
+            --include-package=libtorrent `
+            --include-package=aiohttp `
+            --include-package=websockets `
+            --include-package=qasync `
+            --include-package=psutil `
+            --include-package=nodriver `
+            --include-data-dir=data=data `
+            --include-data-dir=ui=ui `
+            --windows-console-mode=force `
+            --output-dir=dist-onefile `
+            --output-filename=amagi-player.exe `
+            --assume-yes-for-downloads `
+            --company-name=AkashaForge `
+            --product-name=Amagi-Player `
+            --file-version=$v4 `
+            --product-version=$v4 `
+            --file-description=Amagi-Player (onefile) `
+            main.py
+          if ($LASTEXITCODE -ne 0) { throw "nuitka onefile failed" }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-onefile
+          path: dist-onefile/amagi-player.exe
+          retention-days: 7
+
+  # ======================================================================
+  # 3. LINUX STANDALONE
+  # ======================================================================
+  build-linux:
+    name: Linux Standalone (experimental)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libglib2.0-0 libgl1 \
+            libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
+            libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0 \
+            libxcb-xfixes0 libxcb-render-util0 libxcb-randr0 \
+            libxcomposite1 libxdamage1 libxrandr2 libxtst6 \
+            libxcursor1 libxi6 libxss1 libgbm1 \
+            libnss3 libasound2 ffmpeg ccache
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install nuitka ordered-set zstandard
+
+      - name: Build with Nuitka (Linux)
+        run: |
+          set -e
+          python -m nuitka \
+            --standalone \
+            --enable-plugin=pyqt6 \
+            --include-package=PyQt6 \
+            --include-qt-plugins=multimedia \
+            --include-module=PyQt6.QtWebEngineCore \
+            --include-module=PyQt6.QtWebEngineWidgets \
+            --include-package=defusedxml \
+            --follow-import-to=defusedxml \
+            --user-package-configuration-file=nuitka-package-config.yml \
+            --include-package=curl_cffi \
+            --include-package-data=curl_cffi \
+            --include-module=curl_cffi.requests \
+            --include-module=curl_cffi._wrapper \
+            --include-package=cloudscraper \
+            --include-package-data=cloudscraper \
+            --follow-import-to=cloudscraper \
+            --include-package=libtorrent \
+            --include-package=aiohttp \
+            --include-package=websockets \
+            --include-package=qasync \
+            --include-package=psutil \
+            --include-package=nodriver \
+            --include-data-dir=data=data \
+            --include-data-dir=ui=ui \
+            --output-dir=dist-linux \
+            --output-filename=amagi-player \
+            --assume-yes-for-downloads \
+            --report=dist-linux/nuitka-report.xml \
+            main.py
+
+      - name: Create tarball
+        run: |
+          set -e
+          DIST=$(find dist-linux -maxdepth 1 -type d -name "*.dist" | head -1)
+          test -n "$DIST" || { echo "no .dist"; exit 1; }
+          cat > "$DIST/README-LINUX.txt" <<'EOF'
+          Amagi-Player — Linux (experimental)
+          Requires: sudo apt install libxcb-cursor0 libegl1 ffmpeg libnss3 libasound2
+          Run: ./amagi-player
+          EOF
+          VERSION="${{ steps.version.outputs.version }}"
+          tar -C "$DIST" -czf "dist-linux/amagi-player-${VERSION}-linux-x86_64.tar.gz" .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-standalone
+          path: dist-linux/*.tar.gz
+          retention-days: 7
+
+  # ======================================================================
+  # 4. RELEASE — срабатывает если ХОТЯ БЫ ОДНА сборка успешна
+  # ======================================================================
+  create-release:
+    name: Publish Release
+    needs: [build-windows-standalone, build-windows-onefile, build-linux]
+    runs-on: ubuntu-latest
+    if: |
+      always() && (
+        needs.build-windows-standalone.result == 'success' ||
+        needs.build-windows-onefile.result == 'success' ||
+        needs.build-linux.result == 'success'
+      )
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+        continue-on-error: true
+
+      - name: List downloaded artifacts
+        run: find artifacts -type f 2>/dev/null | sort || echo "no artifacts"
+
+      - name: Determine version
+        id: version
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: "Amagi-Player ${{ steps.version.outputs.tag }}"
           generate_release_notes: true
-          files: dist/amagi-player-v${{ steps.version.outputs.version }}-windows.zip
+          files: |
+            artifacts/**/*.zip
+            artifacts/**/*.exe
+            artifacts/**/*.tar.gz
           draft: false
-          prerelease: ${{ contains(github.ref_name, 'beta') }}
+          prerelease: true
