@@ -230,6 +230,27 @@ exhausted.
 - **Watch history** — stored in `data/app_data.db`, backs the
   "Continue watching" feature
 
+### Concurrency and process control
+
+The application runs on a single event loop shared by Qt and
+asyncio. The bridge is **qasync**: it lets the Qt event loop drive
+asyncio coroutines and vice versa, so there is no second thread,
+no locks, and no races between UI code and networking code.
+
+Network work — search, metadata, poster downloads — is written as
+`async` / `await`. The UI stays interactive while it runs. Work
+that cannot be made asynchronous (reading a file, writing a poster
+to disk, opening the cache) is offloaded to a thread pool via
+`run_in_executor`. The event loop is never blocked by a syscall.
+
+Helper processes spawned by the search pipeline — Jackett in
+private mode, headless browsers via `nodriver` — are tracked with
+**psutil**. On startup, leftovers from previous crashed sessions
+are killed before the UI appears. A periodic timer (once a minute)
+terminates hung browser processes. On exit, the whole process tree
+is cleaned up: even a hard crash in a previous run does not leave
+orphans behind.
+
 ---
 
 ## How the release is built
@@ -323,10 +344,10 @@ it produces:
 
 Layers:
 
-· UI — PyQt6 widgets, only rendering and signals
-· Controllers — feed, details, stream; orchestrate state
-· Services — Internet Archive search, metadata, playback
-· Data — SQLite databases and file caches
+- **UI** — PyQt6 widgets, only rendering and signals
+- **Controllers** — feed, details, stream; orchestrate state
+- **Services** — Internet Archive search, metadata, playback
+- **Data** — SQLite databases and file caches
 
 The public mode touches only the Internet Archive branch. The
 libtorrent branch exists for private mode and is not used by
@@ -334,34 +355,34 @@ regular builds.
 
 ---
 
-Requirements
+## Requirements
 
-· Windows 10/11 — supported
-· Linux — experimental build shipped in the same release, not
+- **Windows 10/11** — supported
+- **Linux** — experimental build shipped in the same release, not
   tested on every distribution; requires system libraries (see
-  README-LINUX.txt in the archive)
-· ~300 MB of free disk space for the archive, ~500 MB unpacked
-· Internet access for search and playback
+  `README-LINUX.txt` in the archive)
+- ~300 MB of free disk space for the archive, ~500 MB unpacked
+- Internet access for search and playback
 
-For running from source you additionally need Python 3.10+.
+For **running from source** you additionally need Python 3.10+.
 
 ---
 
-Installation
+## Installation
 
-From Releases (recommended)
+### From Releases (recommended)
 
-1. Download the archive from the Releases page
+1. Download the archive from the [Releases](https://github.com/AkashaForge/ama-gi-player/releases) page
 2. Unpack it into any folder
-3. Run amagi-player (Windows: amagi-player.exe)
+3. Run `amagi-player` (Windows: `amagi-player.exe`)
 4. Accept the terms of use
 
-The local catalog data/whitelist.db ships in the archive already
+The local catalog `data/whitelist.db` ships in the archive already
 populated. If it is removed, the next launch creates an empty
 table and the feed stays empty until it is restored — see
-tools/apply_seed.py in the source tree.
+`tools/apply_seed.py` in the source tree.
 
-From source
+### From source
 
 ```bash
 git clone https://github.com/AkashaForge/ama-gi-player.git
@@ -372,7 +393,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-For development
+### For development
 
 ```bash
 pip install -r requirements-dev.txt
@@ -381,33 +402,34 @@ pytest
 
 ---
 
-Usage
+## Usage
 
 1. Launch the application and accept the terms.
 2. Browse the feed or search by title.
 3. Click a card to open details.
-4. Press Start streaming — playback begins automatically.
+4. Press **Start streaming** — playback begins automatically.
 5. Use the built-in player controls: play/pause, seek, fullscreen.
 6. To resume later, use "Continue watching" on the main screen.
 
 ---
 
-Configuration
+## Configuration
 
-Modes
+### Modes
 
 The application runs in one of two modes, determined by the file
-data/mode.txt. If the file is absent, public is used.
+`data/mode.txt`. If the file is absent, `public` is used.
 
-Mode Status Purpose
-public Supported Internet Archive only. Default mode
-private Experimental (developers) Extended architecture, not supported
+| Mode | Status | Purpose |
+|---|---|---|
+| `public` | Supported | Internet Archive only. Default mode |
+| `private` | Experimental (developers) | Extended architecture, not supported |
 
-Optional metadata
+### Optional metadata
 
 For extended film metadata (longer descriptions, high-resolution
-posters), an optional Kinopoisk API key can be placed in a
-.env file next to the executable:
+posters), an optional **Kinopoisk API key** can be placed in a
+`.env` file next to the executable:
 
 ```text
 KP_API_KEY=your_key
@@ -419,17 +441,18 @@ metadata. Nothing is broken by its absence.
 
 ---
 
-Diagnostics
+## Diagnostics
 
 The application prints diagnostic messages to the console
 (opened alongside the executable). Useful lines:
 
-Log line Meaning
-Mode: PUBLIC Public mode is active
-Feed: page=N, M films Feed loaded
-IA query: ... Request to Internet Archive
-IA result: N direct_url N playable candidates found
-DEMUX ERROR Playback error — fallback or retry will follow
+| Log line | Meaning |
+|---|---|
+| `Mode: PUBLIC` | Public mode is active |
+| `Feed: page=N, M films` | Feed loaded |
+| `IA query: ...` | Request to Internet Archive |
+| `IA result: N direct_url` | N playable candidates found |
+| `DEMUX ERROR` | Playback error — fallback or retry will follow |
 
 If the application does not start — run the executable from
 PowerShell to see the full traceback:
@@ -441,7 +464,7 @@ cd <folder>
 
 ---
 
-Project structure
+## Project structure
 
 ```text
 ama-gi-player/
@@ -469,36 +492,36 @@ ama-gi-player/
 
 ---
 
-Legal information
+## Legal information
 
-Amagi-Player is distributed under the GNU General Public License v3.0.
+Amagi-Player is distributed under the **GNU General Public License v3.0**.
 
-· Full license text — LICENSE
-· Third-party components — LICENSES.txt
-· Attribution — NOTICE
-· Code signing policy — CODE_SIGNING_POLICY.md
-· Security policy — SECURITY.md
-· Privacy policy — PRIVACY.md
-· Terms of use and privacy policy are shown on first launch
-  (see legal_texts.py)
+- Full license text — [`LICENSE`](LICENSE)
+- Third-party components — [`LICENSES.txt`](LICENSES.txt)
+- Attribution — [`NOTICE`](NOTICE)
+- Code signing policy — [`CODE_SIGNING_POLICY.md`](CODE_SIGNING_POLICY.md)
+- Security policy — [`SECURITY.md`](SECURITY.md)
+- Privacy policy — [`PRIVACY.md`](PRIVACY.md)
+- Terms of use and privacy policy are shown on first launch
+  (see `legal_texts.py`)
 
 In short:
 
-· The application does not host or redistribute works.
-· Default sources are open public-domain archives (Internet Archive).
-· The application runs locally, without analytics or telemetry.
+- The application does not host or redistribute works.
+- Default sources are open public-domain archives (Internet Archive).
+- The application runs locally, without analytics or telemetry.
 
 ---
 
-Contributing
+## Contributing
 
-PRs and Issues are welcome. See CONTRIBUTING.md.
+PRs and Issues are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-By submitting a PR, you agree to license your contribution under GPLv3.
+By submitting a PR, you agree to license your contribution under **GPLv3**.
 
 ---
 
-License
+## License
 
 ```text
 Amagi-Player
