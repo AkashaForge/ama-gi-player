@@ -1,19 +1,3 @@
-# Amagi-Player — desktop media player for public-domain content
-# Copyright (C) 2026 AkashaForge
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
 name: Build and Release
 
 on:
@@ -23,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (e.g., v1.2.0)"
+        description: "Tag to release (e.g., v2.2.0-beta.1)"
         required: true
         type: string
 
@@ -31,24 +15,34 @@ permissions:
   contents: write
 
 jobs:
+  # ======================================================================
+  # WINDOWS: Dev ZIP (standalone, force console) + User EXE (onefile, no console)
+  # ======================================================================
   build-windows:
-    name: Build standalone and release
+    name: Build Windows (Dev ZIP + User EXE)
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
 
     steps:
       - name: Checkout
-        # v4.2.2 — pin to SHA (supply-chain safe)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        # v5.3.0 — pin to SHA
         uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b
         with:
           python-version: "3.13"
           cache: "pip"
+
+      - name: Verify project files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not (Test-Path "assets/icon.ico"))  { throw "assets/icon.ico missing" }
+          if (-not (Test-Path "data/whitelist_seed.db")) { throw "data/whitelist_seed.db missing" }
+          if (-not (Test-Path "main.py")) { throw "main.py missing" }
+          Write-Host "[OK] project files present" -ForegroundColor Green
 
       - name: Install dependencies
         shell: pwsh
@@ -58,7 +52,6 @@ jobs:
           pip install -r requirements.txt
           pip install nuitka ordered-set zstandard
 
-          Write-Host "== Verify imports ==" -ForegroundColor Cyan
           python -c "import PyQt6.QtWidgets; print('PyQt6 widgets OK')"
           python -c "import PyQt6.QtMultimedia; print('PyQt6 multimedia OK')"
           python -c "import PyQt6.QtWebEngineWidgets; print('WebEngine OK')"
@@ -66,59 +59,24 @@ jobs:
           python -c "import aiohttp; print('aiohttp OK')"
           python -c "import qasync, psutil, websockets, nodriver; print('rest OK')"
 
-      - name: Diagnose QtMultimedia plugins
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $pluginsPath = (& python -c "from PyQt6.QtCore import QLibraryInfo; print(QLibraryInfo.path(QLibraryInfo.LibraryPath.PluginsPath))").Trim()
-          Write-Host "Qt plugins path: $pluginsPath" -ForegroundColor Cyan
-          $mmPath = Join-Path $pluginsPath "multimedia"
-          if (Test-Path $mmPath) {
-            $dlls = Get-ChildItem $mmPath -Filter "*.dll" -ErrorAction SilentlyContinue
-            Write-Host "[INFO] $mmPath : $($dlls.Count) dll" -ForegroundColor Cyan
-            if ($dlls.Count -gt 0) { $dlls | Select-Object Name | Format-Table }
-            else { Write-Host "[WARN] multimedia dir empty" -ForegroundColor Yellow }
-          } else {
-            Write-Host "[WARN] no multimedia subdir at $mmPath" -ForegroundColor Yellow
-          }
-          $pyqt6Dir = (& python -c "import PyQt6, os; print(os.path.dirname(PyQt6.__file__))").Trim()
-          Write-Host "`n== Search *mediaplugin.dll under PyQt6 ==" -ForegroundColor Cyan
-          Get-ChildItem $pyqt6Dir -Recurse -Filter "*mediaplugin.dll" -ErrorAction SilentlyContinue | Select-Object FullName | Format-Table
-
       - name: Sanity-check whitelist_seed.db
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          if (-not (Test-Path "data\whitelist_seed.db")) {
-            Write-Host "[ERROR] data\whitelist_seed.db missing" -ForegroundColor Red
-            exit 1
-          }
           $count = (& python -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('SELECT COUNT(*) FROM movie_whitelist').fetchone()[0])" "data/whitelist_seed.db").Trim()
-          $withIa = (& python -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('SELECT COUNT(*) FROM movie_whitelist WHERE length(archive_identifier) > 0').fetchone()[0])" "data/whitelist_seed.db").Trim()
-          Write-Host "whitelist_seed.db: $count films, $withIa with archive_identifier" -ForegroundColor Cyan
-          if ([int]$count -eq 0) {
-            Write-Host "[ERROR] whitelist_seed.db empty. Run locally:" -ForegroundColor Red
-            Write-Host "  python tools/make_seed.py --rebuild --concurrency 5" -ForegroundColor Yellow
-            exit 1
-          }
+          Write-Host "[OK] whitelist_seed.db: $count films" -ForegroundColor Green
+          if ([int]$count -eq 0) { throw "whitelist_seed.db empty" }
 
       - name: Determine version
         id: version
         shell: pwsh
         env:
-          # Передаём через env, а не ${{ }} прямо в run — shell injection safe
           INPUT_TAG: ${{ github.event.inputs.tag }}
           REF_NAME: ${{ github.ref_name }}
         run: |
           $ErrorActionPreference = "Stop"
-          if ("$env:INPUT_TAG" -ne "") {
-            $tag = "$env:INPUT_TAG"
-          } else {
-            $tag = "$env:REF_NAME"
-          }
+          if ("$env:INPUT_TAG" -ne "") { $tag = "$env:INPUT_TAG" } else { $tag = "$env:REF_NAME" }
           $version = $tag -replace '^v', ''
-          # Для Nuitka --file-version нужны ТОЛЬКО цифры через точку.
-          # "2.1.0-beta.1" -> "2.1.0" -> "2.1.0.0"
           $cleanVersion = $version -replace '[-+].*$', ''
           $parts = @($cleanVersion.Split('.'))
           while ($parts.Count -lt 4) { $parts += "0" }
@@ -128,13 +86,49 @@ jobs:
           "version4=$version4" >> $env:GITHUB_OUTPUT
           Write-Host "Tag=$tag Version=$version Version4=$version4"
 
-      - name: Build with Nuitka (standalone)
+      # ----------------------------------------------------------------
+      # Чистим «личные» файлы из data/ ДО сборки — ни Dev ZIP, ни onefile
+      # не должны их захватить, даже если раннер случайно их увидел.
+      # ----------------------------------------------------------------
+      - name: Clean personal files from project data
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $data = "data"
+          $personal = @(
+            "sources.txt","sources.txt.bak",
+            "direct_sources.txt","direct_sources.txt.bak",
+            "indexers.txt","mode.txt",
+            "app_data.db","app_data.db-wal","app_data.db-shm","app_data.db-journal",
+            "yts_api_base.txt","yts_api_base.txt.private.bak",
+            "balancers.txt","balancers.txt.bak",
+            "tracker_balancers.txt","tracker_balancers.txt.bak",
+            "torapi_base.txt","torapi_base.txt.private.bak",
+            "whitelist.db","whitelist.db-wal","whitelist.db-shm","whitelist.db-journal","whitelist.db.private.bak",
+            ".aria2_secret","trackers_cache.txt","balancers_cache.json"
+          )
+          foreach ($f in $personal) {
+            $p = Join-Path $data $f
+            if (Test-Path $p) { Remove-Item $p -Force; Write-Host "removed: $f" }
+          }
+
+      - name: Prepare working whitelist.db (from seed)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Copy-Item "data\whitelist_seed.db" "data\whitelist.db" -Force
+          & python -c "import sqlite3; c=sqlite3.connect('data/whitelist.db'); c.execute('UPDATE movie_whitelist SET available=1 WHERE available IS NULL'); c.commit(); c.close()"
+          Write-Host "[OK] data/whitelist.db prepared" -ForegroundColor Green
+
+      # ==================== BUILD 1: STANDALONE (Dev, force console) ====================
+      - name: Build standalone (Dev)
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $v4 = "${{ steps.version.outputs.version4 }}"
+          if (Test-Path "dist-standalone") { Remove-Item "dist-standalone" -Recurse -Force }
 
-          $nuitkaArgs = @(
+          $args = @(
             "--standalone"
             "--enable-plugin=pyqt6"
             "--include-package=PyQt6"
@@ -150,60 +144,44 @@ jobs:
             "--include-data-dir=data=data"
             "--include-data-dir=ui=ui"
             "--windows-console-mode=force"
-            "--show-scons"
-            "--output-dir=dist"
-            "--output-filename=amagi-player.exe"
+            "--windows-icon-from-ico=assets/icon.ico"
+            "--output-dir=dist-standalone"
+            "--output-filename=Amagi-Player.exe"
             "--assume-yes-for-downloads"
             "--company-name=AkashaForge"
-            "--product-name=Amagi-Player"
+            "--product-name=Amagi-Player (Dev)"
             "--file-version=$v4"
             "--product-version=$v4"
-            "--file-description=Amagi-Player"
-            "--report=dist/nuitka-report.xml"
+            "--file-description=Amagi-Player - Developer build (console enabled)"
+            "--copyright=Copyright (C) 2026 AkashaForge. GPLv3."
+            "--report=dist-standalone/nuitka-report-standalone.xml"
             "main.py"
           )
+          python -m nuitka @args
+          if ($LASTEXITCODE -ne 0) { throw "nuitka standalone failed" }
 
-          Write-Host ""
-          Write-Host "python -m nuitka $($nuitkaArgs -join ' ')" -ForegroundColor Gray
-          Write-Host ""
-          python -m nuitka @nuitkaArgs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Verify QtMultimedia in dist
+      - name: Verify standalone
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $exe = "dist\main.dist\amagi-player.exe"
-          if (-not (Test-Path $exe)) { Write-Host "[ERROR] exe not built" -ForegroundColor Red; exit 1 }
-          $mb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
-          $distMB = [math]::Round((Get-ChildItem "dist\main.dist" -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB, 1)
-          Write-Host "[OK] exe: $mb MB | main.dist: $distMB MB" -ForegroundColor Green
+          $distDir = Get-ChildItem "dist-standalone" -Directory -Filter "*.dist" | Select-Object -First 1
+          if (-not $distDir) { throw "no .dist folder found in dist-standalone" }
+          $exe = Join-Path $distDir.FullName "Amagi-Player.exe"
+          if (-not (Test-Path $exe)) { throw "Amagi-Player.exe missing inside .dist" }
+          if (-not (Test-Path (Join-Path $distDir.FullName "data/whitelist.db"))) { throw "whitelist.db missing in .dist/data" }
+          if (-not (Test-Path (Join-Path $distDir.FullName "data/whitelist_seed.db"))) { throw "whitelist_seed.db missing in .dist/data" }
+          $mb = [math]::Round((Get-ChildItem $distDir.FullName -Recurse | Measure-Object Length -Sum).Sum / 1MB, 1)
+          Write-Host "[OK] standalone: $($distDir.Name) ($mb MB)" -ForegroundColor Green
 
-          $mmFiles = Get-ChildItem "dist\main.dist" -Recurse -Filter "*mediaplugin.dll" -ErrorAction SilentlyContinue
-          if ($mmFiles.Count -eq 0) {
-            Write-Host "[ERROR] No multimedia plugin DLL in dist!" -ForegroundColor Red
-            Get-ChildItem "dist\main.dist" -Recurse -Directory -Filter "multimedia" | Select-Object FullName | Out-Host
-            exit 1
-          }
-          Write-Host "[OK] multimedia plugins ($($mmFiles.Count)):" -ForegroundColor Green
-          $mmFiles | Select-Object FullName | Format-Table
-
-          $ffmpegDlls = Get-ChildItem "dist\main.dist" -Recurse -Filter "avcodec-*.dll" -ErrorAction SilentlyContinue
-          if ($ffmpegDlls.Count -gt 0) {
-            Write-Host "[OK] ffmpeg backend DLLs ($($ffmpegDlls.Count))" -ForegroundColor Green
-          } else {
-            Write-Host "[WARN] No avcodec-*.dll — ffmpeg backend may not work" -ForegroundColor Yellow
-          }
-
-      - name: Prepare distribution
+      - name: Prepare Dev distribution
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $dist = "dist\main.dist"
-          $data = Join-Path $dist "data"
-          $bin  = Join-Path $dist "bin"
-
+          $distDir = (Get-ChildItem "dist-standalone" -Directory -Filter "*.dist" | Select-Object -First 1).FullName
+          $data = Join-Path $distDir "data"
+          $bin  = Join-Path $distDir "bin"
           New-Item -ItemType Directory -Force -Path $bin | Out-Null
+
           @(
             "Amagi-Player - external utilities folder",
             "=========================================",
@@ -211,91 +189,294 @@ jobs:
             "Optional: place here",
             "  Aria2\aria2c.exe",
             "  Jackett\  (whole folder)",
-            "  Prowlarr\ (whole folder)",
-            "",
-            "Not used in PUBLIC mode."
+            "  Prowlarr\ (whole folder)"
           ) | Set-Content -Path (Join-Path $bin "README.txt") -Encoding UTF8
-
-          $personal = @(
-            "sources.txt","sources.txt.bak",
-            "direct_sources.txt","direct_sources.txt.bak",
-            "indexers.txt","mode.txt",
-            "app_data.db","app_data.db-wal","app_data.db-shm",
-            "yts_api_base.txt","yts_api_base.txt.private.bak"
-          )
-          foreach ($f in $personal) {
-            $p = Join-Path $data $f
-            if (Test-Path $p) { Remove-Item $p -Force }
-          }
-
-          $seedDb = Join-Path $data "whitelist_seed.db"
-          $workDb = Join-Path $data "whitelist.db"
-          if (-not (Test-Path $seedDb)) { Write-Host "[ERROR] seed missing" -ForegroundColor Red; exit 1 }
-          foreach ($sfx in @("", "-wal", "-shm")) {
-            $p = "$workDb$sfx"
-            if (Test-Path $p) { Remove-Item $p -Force }
-          }
-          Copy-Item $seedDb $workDb
-          $seedCount = (& python -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('SELECT COUNT(*) FROM movie_whitelist').fetchone()[0])" $workDb).Trim()
-          Write-Host "[OK] whitelist.db <- whitelist_seed.db ($seedCount films)" -ForegroundColor Green
-          & python -c "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('UPDATE movie_whitelist SET available=1 WHERE available IS NULL'); c.commit(); c.close()" $workDb
 
           @(
             "# Amagi-Player - local config",
-            "# Copy to .env next to exe",
+            "# Copy to .env next to Amagi-Player.exe",
             "KP_API_KEY=",
             "ARIA2_SECRET="
-          ) | Set-Content -Path (Join-Path $dist "config.example.txt") -Encoding UTF8
+          ) | Set-Content -Path (Join-Path $distDir "config.example.txt") -Encoding UTF8
 
           @(
-            "Amagi-Player - how to run",
-            "==========================",
+            "Amagi-Player - Developer build",
+            "================================",
             "",
-            "1. Run amagi-player.exe",
-            "2. Accept the terms on first launch",
-            "3. data\ and bin\ are used as-is from this ZIP",
-            "4. Sources: data\sources.txt (template: data\sources.example.txt)",
-            "5. API keys: .env next to exe (template: config.example.txt)",
+            "Console is ALWAYS attached (--windows-console-mode=force).",
+            "Logs are printed to the console window.",
             "",
-            "Mode: data\mode.txt -> public | private (default: public)"
-          ) | Set-Content -Path (Join-Path $dist "README.txt") -Encoding UTF8
+            "Run: Amagi-Player.exe",
+            "Supports private mode: data\mode.txt -> public | private",
+            "",
+            "The data\ folder must stay next to the exe."
+          ) | Set-Content -Path (Join-Path $distDir "README.txt") -Encoding UTF8
 
-          if (Test-Path "README.md") { Copy-Item "README.md" (Join-Path $dist "README.md") }
-          if (Test-Path "LICENSE")   { Copy-Item "LICENSE"   (Join-Path $dist "LICENSE") }
-          if (Test-Path "NOTICE")    { Copy-Item "NOTICE"    (Join-Path $dist "NOTICE") }
+          if (Test-Path "README.md") { Copy-Item "README.md" (Join-Path $distDir "README.md") }
+          if (Test-Path "LICENSE")   { Copy-Item "LICENSE"   (Join-Path $distDir "LICENSE") }
+          if (Test-Path "NOTICE")    { Copy-Item "NOTICE"    (Join-Path $distDir "NOTICE") }
 
-          Write-Host "`n=== data\ contents ===" -ForegroundColor Cyan
-          Get-ChildItem $data | Select-Object Name, Length | Format-Table
-
-      - name: Create ZIP
+      - name: Create Dev ZIP
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $version = "${{ steps.version.outputs.version }}"
-          $zip = "dist/amagi-player-v$version-windows.zip"
-          Compress-Archive -Path "dist/main.dist/*" -DestinationPath $zip -Force
+          New-Item -ItemType Directory -Force -Path "dist" | Out-Null
+          $distDir = (Get-ChildItem "dist-standalone" -Directory -Filter "*.dist" | Select-Object -First 1).FullName
+          $zip = "dist/Amagi-Player-v$version-Dev.zip"
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path "$distDir/*" -DestinationPath $zip -Force
           $mb = [math]::Round((Get-Item $zip).Length / 1MB, 1)
           Write-Host "[OK] $zip ($mb MB)" -ForegroundColor Green
 
-      - name: Upload artifact
-        # v4.5.0 — pin to SHA
+      # ==================== BUILD 2: ONEFILE (User, no console) ====================
+      - name: Build onefile (User)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $v4 = "${{ steps.version.outputs.version4 }}"
+          if (Test-Path "dist/Amagi-Player.exe") { Remove-Item "dist/Amagi-Player.exe" -Force }
+
+          $args = @(
+            "--onefile"
+            "--enable-plugin=pyqt6"
+            "--include-package=PyQt6"
+            "--include-qt-plugins=multimedia"
+            "--include-module=PyQt6.QtWebEngineCore"
+            "--include-module=PyQt6.QtWebEngineWidgets"
+            "--include-package=libtorrent"
+            "--include-package=aiohttp"
+            "--include-package=websockets"
+            "--include-package=qasync"
+            "--include-package=psutil"
+            "--include-package=nodriver"
+            "--include-data-dir=data=data"
+            "--include-data-dir=ui=ui"
+            "--windows-console-mode=disable"
+            "--windows-icon-from-ico=assets/icon.ico"
+            "--output-dir=dist"
+            "--output-filename=Amagi-Player.exe"
+            "--assume-yes-for-downloads"
+            "--company-name=AkashaForge"
+            "--product-name=Amagi-Player"
+            "--file-version=$v4"
+            "--product-version=$v4"
+            "--file-description=Amagi-Player"
+            "--copyright=Copyright (C) 2026 AkashaForge. GPLv3."
+            "--report=dist/nuitka-report-onefile.xml"
+            "main.py"
+          )
+          python -m nuitka @args
+          if ($LASTEXITCODE -ne 0) { throw "nuitka onefile failed" }
+
+      - name: Verify onefile
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not (Test-Path "dist/Amagi-Player.exe")) { throw "dist/Amagi-Player.exe not built" }
+          $mb = [math]::Round((Get-Item "dist/Amagi-Player.exe").Length / 1MB, 1)
+          if ($mb -lt 20) { throw "onefile too small ($mb MB) — likely broken" }
+          Write-Host "[OK] dist/Amagi-Player.exe: $mb MB" -ForegroundColor Green
+
+      - name: Upload Windows artifacts
         uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b
         with:
-          name: release-files
+          name: windows-release
           path: |
-            dist/*.zip
-            dist/nuitka-report.xml
+            dist/Amagi-Player.exe
+            dist/Amagi-Player-v*-Dev.zip
+            dist/*.xml
+            dist-standalone/*.xml
           if-no-files-found: error
           retention-days: 14
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
-        # v2.2.0 — pin to SHA
         uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: "Amagi-Player ${{ steps.version.outputs.tag }}"
           generate_release_notes: true
-          files: dist/amagi-player-v${{ steps.version.outputs.version }}-windows.zip
+          files: |
+            dist/Amagi-Player.exe
+            dist/Amagi-Player-v${{ steps.version.outputs.version }}-Dev.zip
           draft: false
           prerelease: ${{ contains(github.ref_name, 'beta') }}
+
+  # ======================================================================
+  # LINUX: experimental, artifact only (NOT in release)
+  # ======================================================================
+  build-linux-test:
+    name: Build Linux (experimental, artifact only)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      - name: Verify project files
+        run: |
+          set -e
+          test -f assets/icon.png || { echo "assets/icon.png missing"; exit 1; }
+          test -f data/whitelist_seed.db || { echo "data/whitelist_seed.db missing"; exit 1; }
+          test -f main.py || { echo "main.py missing"; exit 1; }
+          echo "[OK] project files present"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libglib2.0-0 libgl1 \
+            libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
+            libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0 \
+            libxcb-xfixes0 libxcb-render-util0 libxcb-randr0 \
+            libxcomposite1 libxdamage1 libxrandr2 libxtst6 \
+            libxcursor1 libxi6 libxss1 libgbm1 \
+            libnss3 libasound2 ffmpeg ccache
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install nuitka ordered-set zstandard
+
+      - name: Verify imports
+        run: |
+          python -c "import PyQt6.QtWidgets; print('PyQt6 widgets OK')"
+          python -c "import PyQt6.QtMultimedia; print('PyQt6 multimedia OK')"
+          python -c "import PyQt6.QtWebEngineWidgets; print('WebEngine OK')"
+          python -c "import libtorrent; print('libtorrent OK')"
+          python -c "import aiohttp; print('aiohttp OK')"
+          python -c "import qasync, psutil, websockets, nodriver; print('rest OK')"
+
+      - name: Sanity-check whitelist_seed.db
+        run: |
+          set -e
+          count=$(python -c "import sqlite3; print(sqlite3.connect('data/whitelist_seed.db').execute('SELECT COUNT(*) FROM movie_whitelist').fetchone()[0])")
+          echo "[OK] whitelist_seed.db: $count films"
+          test "$count" -gt 0
+
+      - name: Determine version
+        id: version
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ -n "$INPUT_TAG" ]; then TAG="$INPUT_TAG"; else TAG="$REF_NAME"; fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG"         >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Tag=$TAG Version=$VERSION"
+
+      - name: Clean personal files from project data
+        run: |
+          set -e
+          for f in sources.txt sources.txt.bak direct_sources.txt direct_sources.txt.bak \
+                   indexers.txt mode.txt app_data.db app_data.db-wal app_data.db-shm app_data.db-journal \
+                   yts_api_base.txt yts_api_base.txt.private.bak \
+                   balancers.txt balancers.txt.bak tracker_balancers.txt tracker_balancers.txt.bak \
+                   torapi_base.txt torapi_base.txt.private.bak \
+                   whitelist.db whitelist.db-wal whitelist.db-shm whitelist.db-journal whitelist.db.private.bak \
+                   .aria2_secret trackers_cache.txt balancers_cache.json; do
+            rm -f "data/$f"
+          done
+
+      - name: Prepare working whitelist.db
+        run: |
+          set -e
+          cp data/whitelist_seed.db data/whitelist.db
+          python -c "import sqlite3; c=sqlite3.connect('data/whitelist.db'); c.execute('UPDATE movie_whitelist SET available=1 WHERE available IS NULL'); c.commit(); c.close()"
+
+      - name: Build with Nuitka
+        run: |
+          set -e
+          rm -rf dist
+          python -m nuitka \
+            --standalone \
+            --enable-plugin=pyqt6 \
+            --include-package=PyQt6 \
+            --include-qt-plugins=multimedia \
+            --include-module=PyQt6.QtWebEngineCore \
+            --include-module=PyQt6.QtWebEngineWidgets \
+            --include-package=libtorrent \
+            --include-package=aiohttp \
+            --include-package=websockets \
+            --include-package=qasync \
+            --include-package=psutil \
+            --include-package=nodriver \
+            --include-data-dir=data=data \
+            --include-data-dir=ui=ui \
+            --linux-icon=assets/icon.png \
+            --output-dir=dist \
+            --output-filename=Amagi-Player \
+            --assume-yes-for-downloads \
+            --report=dist/nuitka-report.xml \
+            main.py
+
+      - name: Verify Linux build
+        run: |
+          set -e
+          DIST=$(find dist -maxdepth 1 -type d -name "*.dist" | head -1)
+          test -n "$DIST" || { echo "no .dist found"; exit 1; }
+          test -x "$DIST/Amagi-Player" || { echo "binary missing/not executable"; exit 1; }
+          test -f "$DIST/data/whitelist_seed.db" || { echo "seed missing in .dist"; exit 1; }
+          test -f "$DIST/data/whitelist.db" || { echo "whitelist.db missing in .dist"; exit 1; }
+          ls -lh "$DIST/Amagi-Player"
+
+      - name: Prepare Linux distribution
+        run: |
+          set -e
+          DIST=$(find dist -maxdepth 1 -type d -name "*.dist" | head -1)
+          mkdir -p "$DIST/bin"
+          cat > "$DIST/bin/README.txt" <<'EOF'
+          Amagi-Player - external utilities folder
+          Optional: aria2, Jackett, Prowlarr
+          EOF
+
+          cat > "$DIST/config.example.txt" <<'EOF'
+          # Amagi-Player - local config
+          KP_API_KEY=
+          ARIA2_SECRET=
+          EOF
+
+          cat > "$DIST/START HERE.txt" <<'EOF'
+          Amagi-Player - Portable (Linux, experimental)
+          ==============================================
+          Run: ./Amagi-Player
+          Requires: libxcb-cursor0, libegl1, ffmpeg
+          Install on Ubuntu/Debian:
+            sudo apt install libxcb-cursor0 libegl1 ffmpeg
+          data/ and bin/ must stay next to the binary.
+          EOF
+
+          [ -f README.md ] && cp README.md "$DIST/README.md"
+          [ -f LICENSE ]   && cp LICENSE   "$DIST/LICENSE"
+          [ -f NOTICE ]    && cp NOTICE    "$DIST/NOTICE"
+
+      - name: Create tarball
+        run: |
+          set -e
+          VERSION="${{ steps.version.outputs.version }}"
+          DIST=$(find dist -maxdepth 1 -type d -name "*.dist" | head -1)
+          tar -C "$DIST" -czf "dist/Amagi-Player-v${VERSION}-linux-x86_64.tar.gz" .
+          ls -lh dist/*.tar.gz
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b
+        with:
+          name: linux-release-experimental
+          path: |
+            dist/*.tar.gz
+            dist/nuitka-report.xml
+          if-no-files-found: error
+          retention-days: 14

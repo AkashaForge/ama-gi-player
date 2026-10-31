@@ -1,0 +1,20 @@
+* [33m6d02709[m[33m ([m[1;32mmain[m[33m)[m security: усиление защиты, балансировка в private-mode и рефакторинг
+* [33mc7eca7f[m[33m ([m[1;33mtag: [m[1;33mv2.1.0-beta.1[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/beta[m[33m, [m[1;31morigin/HEAD[m[33m)[m ci: support beta releases (prerelease + clean version4)
+* [33maa99387[m release: gallery editorial + bento + feed fix + gpl headers
+* [33mf7de884[m[33m ([m[1;31mcodeberg/main[m[33m, [m[1;31mcodeberg/HEAD[m[33m)[m Update main.py
+* [33m8e6c5a3[m Update legal_texts.py
+* [33m6e2d250[m Update legal_gate.py
+* [33maa419c4[m Update config.py
+* [33md936174[m Update feed_controller.py
+* [33mdd4ed54[m Update README.ru.md
+* [33mccf4d68[m Update README.ru.md
+* [33m9d823ab[m Update README.md
+* [33m3b1acd8[m Update README.md
+* [33m5cfc05e[m Update styles.qss
+* [33m035cb76[m Update release.yml
+* [33ma31616e[m Update tests.yml
+* [33m69cea85[m Update verify_whitelist.py
+* [33mbbc7dea[m Update manage_whitelist.py
+* [33mb04404f[m Update make_seed.py
+* [33m09212c6[m Update enrich_whitelist.py
+* [33mf5bd8d6[m Update cache_stats.py
