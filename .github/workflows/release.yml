@@ -1,7 +1,3 @@
-# Amagi-Player — desktop media player for public-domain content
-# Copyright (C) 2026 AkashaForge
-# GPLv3 — see LICENSE
-
 name: Build and Release
 
 on:
@@ -51,24 +47,19 @@ jobs:
           python -c "import libtorrent; print('libtorrent OK')"
           python -c "import aiohttp; print('aiohttp OK')"
           python -c "import defusedxml; print('defusedxml OK')"
-          python -c "from defusedxml import ElementTree; print('defusedxml.ElementTree OK')"
+          python -c "from defusedxml.ElementTree import fromstring; print('defusedxml.ElementTree OK')"
           python -c "import curl_cffi.requests; print('curl_cffi OK')"
           python -c "import cloudscraper; print('cloudscraper OK')"
           python -c "import qasync, psutil, websockets, nodriver; print('rest OK')"
 
-      - name: Diagnose QtMultimedia plugins
+      - name: Determine defusedxml path
+        id: defusedxml_path
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $pluginsPath = (& python -c "from PyQt6.QtCore import QLibraryInfo; print(QLibraryInfo.path(QLibraryInfo.LibraryPath.PluginsPath))").Trim()
-          Write-Host "Qt plugins path: $pluginsPath" -ForegroundColor Cyan
-          $mmPath = Join-Path $pluginsPath "multimedia"
-          if (Test-Path $mmPath) {
-            $dlls = Get-ChildItem $mmPath -Filter "*.dll" -ErrorAction SilentlyContinue
-            Write-Host "[INFO] $mmPath : $($dlls.Count) dll" -ForegroundColor Cyan
-          } else {
-            Write-Host "[WARN] no multimedia subdir at $mmPath" -ForegroundColor Yellow
-          }
+          $defused_path = (& python -c "import defusedxml, os; print(os.path.dirname(defusedxml.__file__))").Trim()
+          Write-Host "defusedxml path: $defused_path"
+          "path=$defused_path" >> $env:GITHUB_OUTPUT
 
       - name: Sanity-check whitelist_seed.db
         shell: pwsh
@@ -111,6 +102,8 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $v4 = "${{ steps.version.outputs.version4 }}"
+          $defused_path = "${{ steps.defusedxml_path.outputs.path }}"
+          $site_packages = Split-Path $defused_path -Parent
 
           $nuitkaArgs = @(
             "--standalone"
@@ -122,11 +115,10 @@ jobs:
             "--include-module=PyQt6.QtWebEngineCore"
             "--include-module=PyQt6.QtWebEngineWidgets"
 
-            # --- defusedxml (force include + disable anti-bloat) ---
+            # --- defusedxml (force include + plugin directory for dynamic import) ---
             "--include-package=defusedxml"
             "--include-package-data=defusedxml"
             "--follow-import-to=defusedxml"
-            "--noinclude-defusedxml-mode=nofollow"
             "--include-module=defusedxml"
             "--include-module=defusedxml.common"
             "--include-module=defusedxml.ElementTree"
@@ -137,6 +129,7 @@ jobs:
             "--include-module=defusedxml.pulldom"
             "--include-module=defusedxml.sax"
             "--include-module=defusedxml.xmlrpc"
+            "--include-plugin-directory=$defused_path"
 
             # --- curl_cffi (C-extension + wrapper) ---
             "--include-package=curl_cffi"
@@ -199,6 +192,13 @@ jobs:
           if (-not (Test-Path "$d\ui\styles.qss"))          { Write-Host "[ERROR] ui/styles.qss missing in dist" -ForegroundColor Red; exit 1 }
           Write-Host "[OK] data + ui present" -ForegroundColor Green
 
+          # defusedxml: проверяем, что пакет реально попал в .dist
+          $defusedDir = Get-ChildItem $d -Recurse -Directory -Filter "defusedxml" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $defusedDir) { Write-Host "[ERROR] defusedxml directory missing in dist" -ForegroundColor Red; exit 1 }
+          $defusedPy = Get-ChildItem $defusedDir.FullName -Filter "*.py" -ErrorAction SilentlyContinue
+          if ($defusedPy.Count -eq 0) { Write-Host "[ERROR] defusedxml has no .py files in dist" -ForegroundColor Red; exit 1 }
+          Write-Host "[OK] defusedxml present in dist ($($defusedPy.Count) .py files)" -ForegroundColor Green
+
           # Qt multimedia plugin
           $mmFiles = Get-ChildItem $d -Recurse -Filter "*mediaplugin.dll" -ErrorAction SilentlyContinue
           if ($mmFiles.Count -eq 0) {
@@ -221,10 +221,6 @@ jobs:
           $cc = Get-ChildItem $d -Recurse -Filter "curl_cffi*" -ErrorAction SilentlyContinue
           if ($cc.Count -eq 0) { Write-Host "[ERROR] curl_cffi missing in dist" -ForegroundColor Red; exit 1 }
           Write-Host "[OK] C-extensions (libtorrent, curl_cffi) present" -ForegroundColor Green
-
-          # defusedxml can be compiled INTO exe, so no folder check for it.
-          # Just check that .dist isn't missing other critical dirs.
-          Write-Host "[OK] all critical files present" -ForegroundColor Green
 
       - name: Prepare distribution
         shell: pwsh
