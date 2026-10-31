@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (e.g., v2.2.4)"
+        description: "Tag to release (e.g., v2.2.5)"
         required: true
         type: string
 
@@ -20,14 +20,11 @@ permissions:
 
 jobs:
   build-windows:
-    name: Build Windows (standalone ZIP)
+    name: Build standalone and release
     runs-on: windows-latest
-    timeout-minutes: 150
+    timeout-minutes: 120
 
     steps:
-      # ----------------------------------------------------------------
-      # 1. SOURCE
-      # ----------------------------------------------------------------
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -39,24 +36,6 @@ jobs:
           python-version: "3.13"
           cache: "pip"
 
-      # ----------------------------------------------------------------
-      # 2. PRE-FLIGHT
-      # ----------------------------------------------------------------
-      - name: Verify project files
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          if (-not (Test-Path "assets/icon.ico"))         { throw "assets/icon.ico missing" }
-          if (-not (Test-Path "data/whitelist_seed.db"))  { throw "data/whitelist_seed.db missing" }
-          if (-not (Test-Path "ui/styles.qss"))           { throw "ui/styles.qss missing" }
-          if (-not (Test-Path "main.py"))                 { throw "main.py missing" }
-          $posters = (Get-ChildItem "data/seed_posters" -Filter "*.jpg" -ErrorAction SilentlyContinue).Count
-          Write-Host "[OK] icon.ico, whitelist_seed.db, styles.qss, main.py present"
-          Write-Host "[OK] seed_posters: $posters files"
-
-      # ----------------------------------------------------------------
-      # 3. DEPENDENCIES
-      # ----------------------------------------------------------------
       - name: Install dependencies
         shell: pwsh
         run: |
@@ -65,52 +44,58 @@ jobs:
           pip install -r requirements.txt
           pip install nuitka ordered-set zstandard
 
-          Write-Host "`n== Installed PyQt6 versions ==" -ForegroundColor Cyan
-          pip show PyQt6 PyQt6-Qt6 PyQt6-WebEngine PyQt6-WebEngine-Qt6 PyQt6_sip |
-            Select-String -Pattern "^(Name|Version):" | Format-Table -AutoSize
+          Write-Host "== Verify imports ==" -ForegroundColor Cyan
+          python -c "import PyQt6.QtWidgets; print('PyQt6 widgets OK')"
+          python -c "import PyQt6.QtMultimedia; print('PyQt6 multimedia OK')"
+          python -c "import PyQt6.QtWebEngineWidgets; print('WebEngine OK')"
+          python -c "import libtorrent; print('libtorrent OK')"
+          python -c "import aiohttp; print('aiohttp OK')"
+          python -c "import defusedxml; print('defusedxml OK')"
+          python -c "from defusedxml import ElementTree; print('defusedxml.ElementTree OK')"
+          python -c "import curl_cffi.requests; print('curl_cffi OK')"
+          python -c "import cloudscraper; print('cloudscraper OK')"
+          python -c "import qasync, psutil, websockets, nodriver; print('rest OK')"
 
-      - name: Verify imports (system Python)
+      - name: Diagnose QtMultimedia plugins
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          Write-Host "== PyQt6 ==" -ForegroundColor Cyan
-          python -c "import PyQt6.QtWidgets; print('OK: PyQt6.QtWidgets')"
-          python -c "import PyQt6.QtMultimedia; print('OK: PyQt6.QtMultimedia')"
-          python -c "import PyQt6.QtMultimediaWidgets; print('OK: PyQt6.QtMultimediaWidgets')"
-          python -c "from PyQt6.QtWebEngineCore import QWebEnginePage; print('OK: PyQt6.QtWebEngineCore')"
-          python -c "from PyQt6.QtWebEngineWidgets import QWebEngineView; print('OK: PyQt6.QtWebEngineWidgets')"
-          python -c "from PyQt6.QtWebChannel import QWebChannel; print('OK: PyQt6.QtWebChannel')"
-          Write-Host "== Third-party ==" -ForegroundColor Cyan
-          python -c "import aiohttp; print('OK: aiohttp')"
-          python -c "import cloudscraper; print('OK: cloudscraper')"
-          python -c "import curl_cffi.requests; print('OK: curl_cffi')"
-          python -c "import defusedxml; print('OK: defusedxml')"
-          python -c "from defusedxml import ElementTree; print('OK: defusedxml.ElementTree')"
-          python -c "from defusedxml.ElementTree import fromstring; print('OK: defusedxml.ElementTree.fromstring')"
-          python -c "import libtorrent; print('OK: libtorrent')"
-          python -c "import nodriver; print('OK: nodriver')"
-          python -c "import psutil; print('OK: psutil')"
-          python -c "import qasync; print('OK: qasync')"
-          python -c "import websockets; print('OK: websockets')"
+          $pluginsPath = (& python -c "from PyQt6.QtCore import QLibraryInfo; print(QLibraryInfo.path(QLibraryInfo.LibraryPath.PluginsPath))").Trim()
+          Write-Host "Qt plugins path: $pluginsPath" -ForegroundColor Cyan
+          $mmPath = Join-Path $pluginsPath "multimedia"
+          if (Test-Path $mmPath) {
+            $dlls = Get-ChildItem $mmPath -Filter "*.dll" -ErrorAction SilentlyContinue
+            Write-Host "[INFO] $mmPath : $($dlls.Count) dll" -ForegroundColor Cyan
+          } else {
+            Write-Host "[WARN] no multimedia subdir at $mmPath" -ForegroundColor Yellow
+          }
 
       - name: Sanity-check whitelist_seed.db
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          if (-not (Test-Path "data\whitelist_seed.db")) {
+            Write-Host "[ERROR] data\whitelist_seed.db missing" -ForegroundColor Red
+            exit 1
+          }
           $count = (& python -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('SELECT COUNT(*) FROM movie_whitelist').fetchone()[0])" "data/whitelist_seed.db").Trim()
           $withIa = (& python -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('SELECT COUNT(*) FROM movie_whitelist WHERE length(archive_identifier) > 0').fetchone()[0])" "data/whitelist_seed.db").Trim()
           Write-Host "whitelist_seed.db: $count films, $withIa with archive_identifier" -ForegroundColor Cyan
-          if ([int]$count -eq 0) { throw "whitelist_seed.db empty" }
+          if ([int]$count -eq 0) {
+            Write-Host "[ERROR] whitelist_seed.db empty" -ForegroundColor Red
+            exit 1
+          }
 
       - name: Determine version
         id: version
         shell: pwsh
-        env:
-          INPUT_TAG: ${{ github.event.inputs.tag }}
-          REF_NAME: ${{ github.ref_name }}
         run: |
           $ErrorActionPreference = "Stop"
-          if ("$env:INPUT_TAG" -ne "") { $tag = "$env:INPUT_TAG" } else { $tag = "$env:REF_NAME" }
+          if ("${{ github.event.inputs.tag }}" -ne "") {
+            $tag = "${{ github.event.inputs.tag }}"
+          } else {
+            $tag = "$env:GITHUB_REF_NAME"
+          }
           $version = $tag -replace '^v', ''
           $cleanVersion = $version -replace '[-+].*$', ''
           $parts = @($cleanVersion.Split('.'))
@@ -121,258 +106,135 @@ jobs:
           "version4=$version4" >> $env:GITHUB_OUTPUT
           Write-Host "Tag=$tag Version=$version Version4=$version4"
 
-      # ----------------------------------------------------------------
-      # 4. DATA PREP
-      # ----------------------------------------------------------------
-      - name: Clean personal files from data/
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $personal = @(
-            "sources.txt","sources.txt.bak",
-            "direct_sources.txt","direct_sources.txt.bak",
-            "indexers.txt","mode.txt",
-            "app_data.db","app_data.db-wal","app_data.db-shm","app_data.db-journal",
-            "yts_api_base.txt","yts_api_base.txt.private.bak",
-            "balancers.txt","balancers.txt.bak",
-            "tracker_balancers.txt","tracker_balancers.txt.bak",
-            "torapi_base.txt","torapi_base.txt.private.bak",
-            "whitelist.db","whitelist.db-wal","whitelist.db-shm","whitelist.db-journal","whitelist.db.private.bak",
-            ".aria2_secret","trackers_cache.txt","balancers_cache.json"
-          )
-          foreach ($f in $personal) {
-            $p = Join-Path "data" $f
-            if (Test-Path $p) { Remove-Item $p -Force }
-          }
-
-      - name: Prepare working whitelist.db (from seed)
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          Copy-Item "data\whitelist_seed.db" "data\whitelist.db" -Force
-          & python -c "import sqlite3; c=sqlite3.connect('data/whitelist.db'); c.execute('UPDATE movie_whitelist SET available=1 WHERE available IS NULL'); c.commit(); c.close()"
-          Write-Host "[OK] data/whitelist.db prepared"
-
-      # ----------------------------------------------------------------
-      # 5. BUILD (Nuitka standalone)
-      # ----------------------------------------------------------------
-      - name: Build with Nuitka
+      - name: Build with Nuitka (standalone)
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $v4 = "${{ steps.version.outputs.version4 }}"
-          if (Test-Path "dist") { Remove-Item "dist" -Recurse -Force }
 
           $nuitkaArgs = @(
-            # ------- build mode -------
             "--standalone"
-
-            # ------- PyQt6 -------
             "--enable-plugin=pyqt6"
+
+            # --- PyQt6 core ---
             "--include-package=PyQt6"
-            "--include-package-data=PyQt6"
-            "--include-module=PyQt6.QtCore"
-            "--include-module=PyQt6.QtGui"
-            "--include-module=PyQt6.QtWidgets"
-            "--include-module=PyQt6.QtNetwork"
-            "--include-module=PyQt6.QtMultimedia"
-            "--include-module=PyQt6.QtMultimediaWidgets"
+            "--include-qt-plugins=multimedia"
             "--include-module=PyQt6.QtWebEngineCore"
             "--include-module=PyQt6.QtWebEngineWidgets"
-            "--include-module=PyQt6.QtWebChannel"
 
-            # ------- Qt native plugins (clean, no qml) -------
-            "--include-qt-plugins=sensible,styles"
-            "--noinclude-qt-plugins=qml"
-
-            # ------- defusedxml (aggressive) -------
+            # --- defusedxml (force include + disable anti-bloat) ---
             "--include-package=defusedxml"
             "--include-package-data=defusedxml"
             "--follow-import-to=defusedxml"
+            "--noinclude-defusedxml-mode=nofollow"
             "--include-module=defusedxml"
             "--include-module=defusedxml.common"
             "--include-module=defusedxml.ElementTree"
             "--include-module=defusedxml.cElementTree"
             "--include-module=defusedxml.expatbuilder"
             "--include-module=defusedxml.expatreader"
-            "--include-module=defusedxml.lxml"
             "--include-module=defusedxml.minidom"
             "--include-module=defusedxml.pulldom"
             "--include-module=defusedxml.sax"
             "--include-module=defusedxml.xmlrpc"
 
-            # ------- aiohttp -------
-            "--include-package=aiohttp"
-            "--include-package-data=aiohttp"
-            "--follow-import-to=aiohttp"
+            # --- curl_cffi (C-extension + wrapper) ---
+            "--include-package=curl_cffi"
+            "--include-package-data=curl_cffi"
+            "--include-module=curl_cffi.requests"
+            "--include-module=curl_cffi._wrapper"
 
-            # ------- cloudscraper -------
+            # --- cloudscraper ---
             "--include-package=cloudscraper"
             "--include-package-data=cloudscraper"
             "--follow-import-to=cloudscraper"
 
-            # ------- curl_cffi -------
-            "--include-package=curl_cffi"
-            "--include-package-data=curl_cffi"
-            "--include-module=curl_cffi"
-            "--include-module=curl_cffi.requests"
-            "--include-module=curl_cffi._wrapper"
-
-            # ------- libtorrent -------
+            # --- existing packages ---
             "--include-package=libtorrent"
-            "--include-package-data=libtorrent"
-            "--include-module=libtorrent"
-
-            # ------- nodriver -------
-            "--include-package=nodriver"
-            "--include-package-data=nodriver"
-            "--follow-import-to=nodriver"
-
-            # ------- psutil -------
-            "--include-package=psutil"
-            "--include-package-data=psutil"
-            "--include-module=psutil"
-
-            # ------- qasync -------
-            "--include-package=qasync"
-            "--include-package-data=qasync"
-            "--include-module=qasync._qt"
-
-            # ------- websockets -------
+            "--include-package=aiohttp"
             "--include-package=websockets"
-            "--include-package-data=websockets"
-            "--follow-import-to=websockets"
+            "--include-package=qasync"
+            "--include-package=psutil"
+            "--include-package=nodriver"
 
-            # ------- project data -------
+            # --- data ---
             "--include-data-dir=data=data"
             "--include-data-dir=ui=ui"
 
-            # ------- exe metadata -------
+            # --- exe metadata ---
             "--windows-console-mode=force"
-            "--windows-icon-from-ico=assets/icon.ico"
             "--output-dir=dist"
-            "--output-filename=Amagi-Player.exe"
+            "--output-filename=amagi-player.exe"
             "--assume-yes-for-downloads"
             "--company-name=AkashaForge"
             "--product-name=Amagi-Player"
             "--file-version=$v4"
             "--product-version=$v4"
             "--file-description=Amagi-Player"
-            "--copyright=Copyright (C) 2026 AkashaForge. GPLv3."
-
-            # ------- report + entry point -------
             "--report=dist/nuitka-report.xml"
             "main.py"
           )
 
           Write-Host ""
-          Write-Host "=== Nuitka command ===" -ForegroundColor Gray
           Write-Host "python -m nuitka $($nuitkaArgs -join ' ')" -ForegroundColor Gray
           Write-Host ""
           python -m nuitka @nuitkaArgs
-          if ($LASTEXITCODE -ne 0) { throw "nuitka failed" }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      # ----------------------------------------------------------------
-      # 6. VERIFY (files present)
-      # ----------------------------------------------------------------
-      - name: Verify build (files present)
+      - name: Verify build (files + critical modules)
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $distDir = Get-ChildItem "dist" -Directory -Filter "*.dist" | Select-Object -First 1
-          if (-not $distDir) { throw "no .dist folder in dist/" }
-          $d = $distDir.FullName
-          Write-Host "dist: $d"
+          $d = "dist\main.dist"
+          if (-not (Test-Path $d)) { Write-Host "[ERROR] dist/main.dist missing" -ForegroundColor Red; exit 1 }
 
-          $exe = Join-Path $d "Amagi-Player.exe"
-          if (-not (Test-Path $exe)) { throw "Amagi-Player.exe missing" }
+          $exe = "$d\amagi-player.exe"
+          if (-not (Test-Path $exe)) { Write-Host "[ERROR] exe not built" -ForegroundColor Red; exit 1 }
           $mb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
-          $totalMb = [math]::Round((Get-ChildItem $d -Recurse | Measure-Object Length -Sum).Sum / 1MB, 1)
-          Write-Host "[OK] exe: $mb MB | total: $totalMb MB" -ForegroundColor Green
+          $distMB = [math]::Round((Get-ChildItem $d -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB, 1)
+          Write-Host "[OK] exe: $mb MB | main.dist: $distMB MB" -ForegroundColor Green
 
-          if (-not (Test-Path (Join-Path $d "data\whitelist.db")))      { throw "data/whitelist.db missing" }
-          if (-not (Test-Path (Join-Path $d "data\whitelist_seed.db"))) { throw "data/whitelist_seed.db missing" }
-          if (-not (Test-Path (Join-Path $d "ui\styles.qss")))          { throw "ui/styles.qss missing" }
-          Write-Host "[OK] data + ui files present" -ForegroundColor Green
+          # data/ui files
+          if (-not (Test-Path "$d\data\whitelist_seed.db")) { Write-Host "[ERROR] whitelist_seed.db missing in dist" -ForegroundColor Red; exit 1 }
+          if (-not (Test-Path "$d\ui\styles.qss"))          { Write-Host "[ERROR] ui/styles.qss missing in dist" -ForegroundColor Red; exit 1 }
+          Write-Host "[OK] data + ui present" -ForegroundColor Green
 
-          foreach ($mod in @("libtorrent","curl_cffi")) {
-            $pyd = Get-ChildItem $d -Recurse -Filter "$mod*.pyd" -ErrorAction SilentlyContinue | Select-Object -First 1
-            if (-not $pyd) {
-              $dir = Get-ChildItem $d -Recurse -Directory -Filter $mod -ErrorAction SilentlyContinue | Select-Object -First 1
-              if (-not $dir) { throw "C-extension '$mod' not found in .dist" }
-            }
+          # Qt multimedia plugin
+          $mmFiles = Get-ChildItem $d -Recurse -Filter "*mediaplugin.dll" -ErrorAction SilentlyContinue
+          if ($mmFiles.Count -eq 0) {
+            Write-Host "[ERROR] No multimedia plugin DLL in dist" -ForegroundColor Red
+            exit 1
           }
-          Write-Host "[OK] C-extensions present (libtorrent, curl_cffi)" -ForegroundColor Green
+          Write-Host "[OK] multimedia plugins: $($mmFiles.Count)" -ForegroundColor Green
 
-          if (-not (Get-ChildItem $d -Recurse -Filter "Qt6WebEngineCore.dll" -ErrorAction SilentlyContinue)) {
-            throw "NO Qt6WebEngineCore.dll in .dist"
+          # ffmpeg backend
+          $ffmpegDlls = Get-ChildItem $d -Recurse -Filter "avcodec-*.dll" -ErrorAction SilentlyContinue
+          if ($ffmpegDlls.Count -eq 0) {
+            Write-Host "[ERROR] No avcodec-*.dll in dist" -ForegroundColor Red
+            exit 1
           }
-          Write-Host "[OK] Qt6WebEngineCore.dll present" -ForegroundColor Green
+          Write-Host "[OK] ffmpeg backend: $($ffmpegDlls.Count) dll" -ForegroundColor Green
 
-          $mm = Get-ChildItem $d -Recurse -Filter "*mediaplugin.dll" -ErrorAction SilentlyContinue
-          if ($mm.Count -eq 0) { throw "NO multimedia plugin DLL in .dist" }
-          Write-Host "[OK] multimedia plugins: $($mm.Count)" -ForegroundColor Green
+          # C-extensions presence
+          $lt = Get-ChildItem $d -Recurse -Filter "libtorrent*.pyd" -ErrorAction SilentlyContinue
+          if ($lt.Count -eq 0) { Write-Host "[ERROR] libtorrent.pyd missing" -ForegroundColor Red; exit 1 }
+          $cc = Get-ChildItem $d -Recurse -Filter "curl_cffi*" -ErrorAction SilentlyContinue
+          if ($cc.Count -eq 0) { Write-Host "[ERROR] curl_cffi missing in dist" -ForegroundColor Red; exit 1 }
+          Write-Host "[OK] C-extensions (libtorrent, curl_cffi) present" -ForegroundColor Green
 
-          $ff = Get-ChildItem $d -Recurse -Filter "avcodec-*.dll" -ErrorAction SilentlyContinue
-          if ($ff.Count -eq 0) { throw "NO avcodec-*.dll in .dist" }
-          Write-Host "[OK] ffmpeg backend: $($ff.Count) dll" -ForegroundColor Green
+          # defusedxml can be compiled INTO exe, so no folder check for it.
+          # Just check that .dist isn't missing other critical dirs.
+          Write-Host "[OK] all critical files present" -ForegroundColor Green
 
-          if (-not (Get-ChildItem $d -Recurse -Filter "qwindows.dll" -ErrorAction SilentlyContinue)) {
-            throw "NO qwindows.dll in .dist"
-          }
-          Write-Host "[OK] qwindows.dll present" -ForegroundColor Green
-
-      # ----------------------------------------------------------------
-      # 7. SMOKE TEST (compiled exe launches)
-      # ----------------------------------------------------------------
-      # Если main.py поддерживает "--version" — он сразу выйдет с кодом 0.
-      # Если не поддерживает — exe запустит GUI, что в headless CI упадёт.
-      # Поэтому используем таймаут и считаем "Process didn't crash within 5s" успехом
-      # только если exit code == 0 (--version) ИЛИ процесс ещё жив через 5 сек.
-      - name: Smoke test (compiled exe launches)
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $distDir = Get-ChildItem "dist" -Directory -Filter "*.dist" | Select-Object -First 1
-          $exe = Join-Path $distDir.FullName "Amagi-Player.exe"
-          Write-Host "Launching: $exe --version"
-
-          $proc = Start-Process -FilePath $exe `
-            -ArgumentList "--version" `
-            -PassThru -NoNewWindow `
-            -RedirectStandardOutput "$env:TEMP\smoke.out.log" `
-            -RedirectStandardError  "$env:TEMP\smoke.err.log"
-
-          Start-Sleep -Seconds 5
-
-          if ($proc.HasExited) {
-            $code = $proc.ExitCode
-            Write-Host "Exit code: $code"
-            if ($code -ne 0) {
-              Write-Host "=== STDOUT ===" -ForegroundColor Cyan
-              Get-Content "$env:TEMP\smoke.out.log" -ErrorAction SilentlyContinue
-              Write-Host "=== STDERR ===" -ForegroundColor Cyan
-              Get-Content "$env:TEMP\smoke.err.log" -ErrorAction SilentlyContinue
-              throw "Compiled exe crashed on startup with exit code $code"
-            }
-            Write-Host "[OK] exe exited cleanly with --version (exit 0)" -ForegroundColor Green
-          } else {
-            Write-Host "[OK] exe still running after 5s (GUI mode, no crash)" -ForegroundColor Green
-            $proc.Kill()
-            $proc.WaitForExit()
-          }
-
-      # ----------------------------------------------------------------
-      # 8. PACKAGE
-      # ----------------------------------------------------------------
       - name: Prepare distribution
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $distDir = (Get-ChildItem "dist" -Directory -Filter "*.dist" | Select-Object -First 1).FullName
-          $bin = Join-Path $distDir "bin"
-          New-Item -ItemType Directory -Force -Path $bin | Out-Null
+          $dist = "dist\main.dist"
+          $data = Join-Path $dist "data"
+          $bin  = Join-Path $dist "bin"
 
+          New-Item -ItemType Directory -Force -Path $bin | Out-Null
           @(
             "Amagi-Player - external utilities folder",
             "=========================================",
@@ -380,54 +242,75 @@ jobs:
             "Optional: place here",
             "  Aria2\aria2c.exe",
             "  Jackett\  (whole folder)",
-            "  Prowlarr\ (whole folder)"
+            "  Prowlarr\ (whole folder)",
+            "",
+            "Not used in PUBLIC mode."
           ) | Set-Content -Path (Join-Path $bin "README.txt") -Encoding UTF8
+
+          $personal = @(
+            "sources.txt","sources.txt.bak",
+            "direct_sources.txt","direct_sources.txt.bak",
+            "indexers.txt","mode.txt",
+            "app_data.db","app_data.db-wal","app_data.db-shm",
+            "yts_api_base.txt","yts_api_base.txt.private.bak"
+          )
+          foreach ($f in $personal) {
+            $p = Join-Path $data $f
+            if (Test-Path $p) { Remove-Item $p -Force }
+          }
+
+          $seedDb = Join-Path $data "whitelist_seed.db"
+          $workDb = Join-Path $data "whitelist.db"
+          if (-not (Test-Path $seedDb)) { Write-Host "[ERROR] seed missing" -ForegroundColor Red; exit 1 }
+          foreach ($sfx in @("", "-wal", "-shm")) {
+            $p = "$workDb$sfx"
+            if (Test-Path $p) { Remove-Item $p -Force }
+          }
+          Copy-Item $seedDb $workDb
+          $seedCount = (& python -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('SELECT COUNT(*) FROM movie_whitelist').fetchone()[0])" $workDb).Trim()
+          Write-Host "[OK] whitelist.db <- whitelist_seed.db ($seedCount films)" -ForegroundColor Green
+          & python -c "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('UPDATE movie_whitelist SET available=1 WHERE available IS NULL'); c.commit(); c.close()" $workDb
 
           @(
             "# Amagi-Player - local config",
-            "# Copy to .env next to Amagi-Player.exe",
+            "# Copy to .env next to exe",
             "KP_API_KEY=",
             "ARIA2_SECRET="
-          ) | Set-Content -Path (Join-Path $distDir "config.example.txt") -Encoding UTF8
+          ) | Set-Content -Path (Join-Path $dist "config.example.txt") -Encoding UTF8
 
           @(
-            "Amagi-Player",
-            "=============",
+            "Amagi-Player - how to run",
+            "==========================",
             "",
-            "1. Run Amagi-Player.exe",
+            "1. Run amagi-player.exe",
             "2. Accept the terms on first launch",
+            "3. data\ and bin\ are used as-is from this ZIP",
+            "4. Sources: data\sources.txt (template: data\sources.example.txt)",
+            "5. API keys: .env next to exe (template: config.example.txt)",
             "",
-            "The data\ folder must stay next to the exe.",
-            "Private mode: data\mode.txt -> public | private",
-            "",
-            "If app crashes — copy the traceback from the console window."
-          ) | Set-Content -Path (Join-Path $distDir "README.txt") -Encoding UTF8
+            "Mode: data\mode.txt -> public | private (default: public)"
+          ) | Set-Content -Path (Join-Path $dist "README.txt") -Encoding UTF8
 
-          if (Test-Path "README.md") { Copy-Item "README.md" (Join-Path $distDir "README.md") }
-          if (Test-Path "LICENSE")   { Copy-Item "LICENSE"   (Join-Path $distDir "LICENSE") }
-          if (Test-Path "NOTICE")    { Copy-Item "NOTICE"    (Join-Path $distDir "NOTICE") }
+          if (Test-Path "README.md") { Copy-Item "README.md" (Join-Path $dist "README.md") }
+          if (Test-Path "LICENSE")   { Copy-Item "LICENSE"   (Join-Path $dist "LICENSE") }
+          if (Test-Path "NOTICE")    { Copy-Item "NOTICE"    (Join-Path $dist "NOTICE") }
 
       - name: Create ZIP
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $version = "${{ steps.version.outputs.version }}"
-          $distDir = (Get-ChildItem "dist" -Directory -Filter "*.dist" | Select-Object -First 1).FullName
-          $zip = "dist/Amagi-Player-v$version-windows.zip"
-          if (Test-Path $zip) { Remove-Item $zip -Force }
-          Compress-Archive -Path "$distDir/*" -DestinationPath $zip -Force
+          $zip = "dist/amagi-player-v$version-windows.zip"
+          Compress-Archive -Path "dist/main.dist/*" -DestinationPath $zip -Force
           $mb = [math]::Round((Get-Item $zip).Length / 1MB, 1)
           Write-Host "[OK] $zip ($mb MB)" -ForegroundColor Green
 
-      # ----------------------------------------------------------------
-      # 9. UPLOAD + RELEASE
-      # ----------------------------------------------------------------
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: windows-release
+          name: release-files
           path: |
-            dist/Amagi-Player-v*-windows.zip
+            dist/*.zip
             dist/nuitka-report.xml
           if-no-files-found: error
           retention-days: 14
@@ -439,6 +322,6 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag }}
           name: "Amagi-Player ${{ steps.version.outputs.tag }}"
           generate_release_notes: true
-          files: dist/Amagi-Player-v${{ steps.version.outputs.version }}-windows.zip
+          files: dist/amagi-player-v${{ steps.version.outputs.version }}-windows.zip
           draft: false
           prerelease: ${{ contains(github.ref_name, 'beta') }}
