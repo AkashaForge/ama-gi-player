@@ -308,41 +308,27 @@ Standalone-сборка сознательно **не** сделана как о
 | Сборка | Nuitka | Python → C → нативный исполняемый файл |
 | Тесты | pytest | Юнит-тесты |
 
----
+-
+flowchart TD
+    UI["PyQt6 UI<br/>Feed / Details / Player"]
+    ORCH["Orchestrator<br/>Facade"]
+    FEED["FeedController"]
+    DET["DetailsController"]
+    STREAM["StreamController"]
+    DB[("whitelist.db<br/>app_data.db")]
+    IA["Internet Archive<br/>advancedsearch / metadata"]
+    LT["libtorrent<br/>private only"]
+    PS["psutil<br/>process manager"]
 
-## Архитектура
-
-```text
-┌──────────────────────────────────────────────┐
-│                  PyQt6 UI                    │
-│            (qasync event loop)               │
-└───────────────┬──────────────────────────────┘
-                │
-       ┌────────┴────────┐
-       │                 │
-   ┌───▼────┐        ┌───▼────┐
-   │ Лента  │        │ Экран  │
-   │ карточ.│        │ деталей│
-   └───┬────┘        └───┬────┘
-       │                 │
-   ┌───▼──────┐      ┌───▼──────┐
-   │ Локальная│      │Контроллер│
-   │ БД (whit)│      │  стрима  │
-   └──────────┘      └───┬──────┘
-                         │
-                ┌────────┴────────┐
-                │                 │
-          ┌─────▼─────┐     ┌─────▼──────┐
-          │ Internet  │     │ libtorrent │
-          │ Archive   │     │ (private)  │
-          │ (public)  │     └─────┬──────┘
-          └───────────┘           │
-                            ┌─────▼──────┐
-                            │ Управление │
-                            │ процессами │
-                            │  (psutil)  │
-                            └────────────┘
-```
+    UI -->|signals| ORCH
+    ORCH --> FEED
+    ORCH --> DET
+    ORCH --> STREAM
+    FEED --> DB
+    DET --> DB
+    STREAM --> IA
+    STREAM -.->|private| LT
+    LT -.-> PS
 
 Слои:
 
