@@ -20,8 +20,8 @@
 
 | | |
 |---|---|
-| ![Dark 1](docs/screenshots/dark-01.png) | ![Dark 2](docs/screenshots/dark-02.png) |
-| ![Dark 3](docs/screenshots/dark-03.png) | ![Dark 4](docs/screenshots/dark-04.png) |
+| ![Dark 1](docs/screenshots/dark-01-v1.png) | ![Dark 2](docs/screenshots/dark-02-v1.png) |
+| ![Dark 3](docs/screenshots/dark-03-v1.png) | ![Dark 4](docs/screenshots/dark-04-v1.png) |
 
 </div>
 
@@ -31,7 +31,7 @@
 
 | | |
 |---|---|
-| ![Light 1](docs/screenshots/light-01.png) | ![Light 2](docs/screenshots/light-02.png) |
+| ![Light 1](docs/screenshots/light-01-v1.png) | ![Light 2](docs/screenshots/light-02-v1.png) |
 
 </div>
 
