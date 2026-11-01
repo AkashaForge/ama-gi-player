@@ -310,36 +310,27 @@ it produces:
 
 ## Architecture
 
-```text
-┌──────────────────────────────────────────────┐
-│                  PyQt6 UI                    │
-│            (qasync event loop)               │
-└───────────────┬──────────────────────────────┘
-                │
-       ┌────────┴────────┐
-       │                 │
-   ┌───▼────┐        ┌───▼────┐
-   │ Feed   │        │ Details│
-   │ Cards  │        │ Screen │
-   └───┬────┘        └───┬────┘
-       │                 │
-   ┌───▼──────┐      ┌───▼──────┐
-   │ Local DB │      │ Stream   │
-   │ (whitelist)     │Controller│
-   └──────────┘      └───┬──────┘
-                         │
-                ┌────────┴────────┐
-                │                 │
-          ┌─────▼─────┐     ┌─────▼──────┐
-          │ Internet  │     │ libtorrent │
-          │ Archive   │     │ (private)  │
-          │ (public)  │     └─────┬──────┘
-          └───────────┘           │
-                            ┌─────▼──────┐
-                            │ Process    │
-                            │ Manager    │
-                            │ (psutil)   │
-                            └────────────┘
+```mermaid
+flowchart TD
+    UI["PyQt6 UI<br/>Feed / Details / Player"]
+    ORCH["Orchestrator<br/>Facade"]
+    FEED["FeedController"]
+    DET["DetailsController"]
+    STREAM["StreamController"]
+    DB[("whitelist.db<br/>app_data.db")]
+    IA["Internet Archive<br/>advancedsearch / metadata"]
+    LT["libtorrent<br/>private only"]
+    PS["psutil<br/>process manager"]
+
+    UI -->|signals| ORCH
+    ORCH --> FEED
+    ORCH --> DET
+    ORCH --> STREAM
+    FEED --> DB
+    DET --> DB
+    STREAM --> IA
+    STREAM -.->|private| LT
+    LT -.-> PS
 ```
 
 Layers:
@@ -352,6 +343,36 @@ Layers:
 The public mode touches only the Internet Archive branch. The
 libtorrent branch exists for private mode and is not used by
 regular builds.
+
+### Playback flow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant UI as DetailsScreen
+    participant SC as StreamController
+    participant SE as ArchiveOrgSearcher
+    participant MD as MetadataFetcher
+    participant PB as QMediaPlayer
+
+    U->>UI: Start streaming
+    UI->>SC: start_streaming_requested(kp_id)
+    SC->>SE: search(title, year)
+    SE->>SE: query cascade (4 fallbacks)
+    SE->>SE: score candidates
+    SE->>MD: find_videos_parallel(identifiers)
+    MD-->>SE: best file per item
+    SE-->>SC: list of direct_url
+    SC->>SC: sort by (format priority, size)
+    SC->>PB: play_url(best)
+    alt Success
+        PB-->>U: video plays
+    else Retry fails
+        PB-->>SC: demux error
+        SC->>SC: retry 5s
+        SC->>PB: next candidate
+    end
+```
 
 ---
 
