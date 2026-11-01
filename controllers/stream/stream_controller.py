@@ -1,6 +1,8 @@
 """StreamController — координатор. ~150 строк."""
 import asyncio
 
+import config
+
 from controllers.stream.buffer_monitor import BufferMonitor
 from controllers.stream.cascade import CascadeExecutor
 from controllers.stream.fallback import FallbackHandler
@@ -31,6 +33,7 @@ class StreamController:
         self._online_sources: list[dict] = []
         self._p2p_fallback: list[dict] = []
         self._direct_fallback: list[dict] = []
+        self._direct_index: int = 0
 
         # Компоненты
         self.buffer = BufferMonitor(
@@ -78,6 +81,7 @@ class StreamController:
         self._online_sources = []
         self._p2p_fallback = []
         self._direct_fallback = []
+        self._direct_index = 0
 
         self.main_window.screen_stack.setCurrentIndex(2)
         self.main_window.player_page.show_loader()
@@ -96,6 +100,9 @@ class StreamController:
         self.stream_in_progress = False
         self.fallback.reset()
         self._online_sources = []
+        self._p2p_fallback = []
+        self._direct_fallback = []
+        self._direct_index = 0
         self.main_window.screen_stack.setCurrentIndex(0)
         self.app.details.check_resume_island()
 
@@ -103,13 +110,62 @@ class StreamController:
         await self._stop_resources()
 
     # ==================================================================
-    #  CALLBACKS от StreamSession
+    #  PUBLIC FALLBACK — переключение на следующий direct_url
+    # ==================================================================
+    def _player_is_active(self) -> bool:
+        """Плеер реально на экране (индекс 2), а не закрыт юзером.
+
+        stream_in_progress не годится: он становится False сразу
+        после старта playback в cascade._dispatch, поэтому
+        проверка на него всегда блокировала бы Skip и auto-fallback.
+        """
+        try:
+            return self.main_window.screen_stack.currentIndex() == 2
+        except Exception:
+            return False
+
+    def _try_next_direct(self):
+        """Public: переключиться на следующий direct_url из списка.
+
+        Вызывается из fallback.py после retry (5 сек) не помог
+        и из _do_skip (ручной Skip в public).
+        """
+        if not self._player_is_active():
+            log.info("direct: player not active, skip")
+            return
+
+        self._direct_index += 1
+        if (not self._direct_fallback
+                or self._direct_index >= len(self._direct_fallback)):
+            log.warning("direct: все %d источников испробованы",
+                        len(self._direct_fallback))
+            self.main_window.player_page.loader_label.setText(
+                "ИСТОЧНИК НЕ РАБОТАЕТ. Все варианты испробованы."
+            )
+            return
+
+        chosen = self._direct_fallback[self._direct_index]
+        log.info("direct: переключение на %d/%d — %s (priority=%s, %.1f MB)",
+                 self._direct_index + 1, len(self._direct_fallback),
+                 chosen["url"][:80],
+                 chosen.get("priority", "?"),
+                 (chosen.get("size", 0) or 0) / 1e6)
+        self.main_window.player_page.show_loader()
+        self.main_window.player_page.loader_label.setText(
+            f"ИСТОЧНИК {self._direct_index + 1}/{len(self._direct_fallback)}..."
+        )
+        self.fallback.reset()
+        self.playback.play_url(
+            chosen["url"], self._current_movie_id, self._current_movie_title
+        )
+
+    # ==================================================================
+    #  P2P CALLBACKS
     # ==================================================================
     def on_ready(self, session):
         if not session.http_server:
             self.on_failed("HTTP server не создан")
             return
-        # Запускаем HTTP-сервер (в новом StreamSession это отложено)
         self.loop.create_task(self._start_http_and_play(session))
 
     async def _start_http_and_play(self, session):
@@ -152,10 +208,19 @@ class StreamController:
 
     async def _do_skip(self):
         log.info("Skip")
-        if self.app.LEGAL_ONLY_MODE:
-            self.main_window.player_page.loader_label.setText(
-                "В public-версии альтернатив нет."
-            )
+        if config.LEGAL_ONLY_MODE:
+            # Public: ручной skip = переключиться на следующий direct_url
+            if not self._direct_fallback:
+                self.main_window.player_page.loader_label.setText(
+                    "Альтернативных источников нет."
+                )
+                return
+            # Если уже на последнем — начинаем заново с первого
+            if self._direct_index >= len(self._direct_fallback) - 1:
+                log.info("Skip: последний источник, начинаем с первого")
+                self._direct_index = -1  # _try_next_direct сдвинет на 0
+            self.fallback.reset()
+            self._try_next_direct()
             return
         if not self.stream_session:
             return
@@ -190,10 +255,9 @@ class StreamController:
 
     def _create_session(self):
         from services.torrent.session import StreamSession
-        import config as _c
         return StreamSession(
             http_session=self.session,
-            downloads_dir=str(_c.DOWNLOADS_DIR),
+            downloads_dir=str(config.DOWNLOADS_DIR),
             libtorrent_session=self.libtorrent_session,
             progress_cb=self._update_bar,
             finished_cb=self.on_ready,
@@ -211,7 +275,6 @@ class StreamController:
         if force:
             self.fallback.do_auto_fallback()
         else:
-            # online не заиграл — переключиться на p2p
             self.loop.create_task(self._online_to_p2p())
 
     async def _online_to_p2p(self):
@@ -226,8 +289,10 @@ class StreamController:
             return
         if self._direct_fallback:
             self._direct_fallback.sort(
-                key=lambda s: s.get("size", 0) or 0, reverse=True
+                key=lambda s: (s.get("priority", 0), s.get("size", 0) or 0),
+                reverse=True,
             )
+            self._direct_index = 0
             chosen = self._direct_fallback[0]
             self.playback.play_url(
                 chosen["url"], self._current_movie_id,

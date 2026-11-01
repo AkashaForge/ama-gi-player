@@ -24,7 +24,6 @@ class FallbackHandler:
         self._auto_max = 3
 
         # --- PUBLIC state (изолирован от private) ---
-        self._public_index = 0
         self._public_retry_attempt = 0
         self._public_retry_pending = False
         self._public_epoch = 0
@@ -40,7 +39,6 @@ class FallbackHandler:
         self._last_demux_ts = 0.0
         # public — сбрасываем epoch, чтобы «старые» QTimer'ы
         # не выстрелили в новый стрим
-        self._public_index = 0
         self._public_retry_attempt = 0
         self._public_retry_pending = False
         self._public_epoch += 1
@@ -61,16 +59,12 @@ class FallbackHandler:
             pass
         self.controller.buffer.mark_stopped()
 
-        # ============================================================
-        #  PUBLIC: отдельная ветка. Private НЕ доходит сюда.
-        # ============================================================
+        # PUBLIC: отдельная ветка. Private НЕ доходит сюда.
         if config.LEGAL_ONLY_MODE:
             self._on_public_demux_error()
             return
 
-        # ============================================================
-        #  PRIVATE: оригинальная логика, БЕЗ изменений.
-        # ============================================================
+        # PRIVATE: оригинальная логика, без изменений.
         if not config.STREAM_AUTO_FALLBACK_ON_DEMUX_ERROR:
             return
         if not self.controller.stream_session:
@@ -100,7 +94,7 @@ class FallbackHandler:
             log.warning("public DEMUX: _direct_fallback пуст")
             return
 
-        if self._public_index >= len(direct):
+        if c._direct_index >= len(direct):
             log.warning("public DEMUX: все %d источников испробованы",
                         len(direct))
             c.main_window.player_page.loader_label.setText(
@@ -108,12 +102,11 @@ class FallbackHandler:
             )
             return
 
-        # --- Попытка 1: retry того же URL через 5 сек ---
         if self._public_retry_attempt < _PUBLIC_MAX_RETRIES:
             self._public_retry_attempt += 1
             self._public_retry_pending = True
             epoch = self._public_epoch
-            url = direct[self._public_index]["url"]
+            url = direct[c._direct_index]["url"]
             log.info("public DEMUX → retry in 5s (attempt %d/%d): %s",
                      self._public_retry_attempt, _PUBLIC_MAX_RETRIES,
                      url[:80])
@@ -126,56 +119,33 @@ class FallbackHandler:
             )
             return
 
-        # --- Попытка 2: retry не помог → следующий direct_url ---
         self._public_retry_attempt = 0
-        self._public_index += 1
-        if self._public_index >= len(direct):
-            log.warning("public: все %d источников испробованы", len(direct))
-            c.main_window.player_page.loader_label.setText(
-                "ИСТОЧНИК НЕ РАБОТАЕТ. Все варианты испробованы."
-            )
-            return
-
-        next_src = direct[self._public_index]
-        log.info("public → next direct %d/%d: %s (priority=%s, %.1f MB)",
-                 self._public_index + 1, len(direct),
-                 next_src["url"][:80],
-                 next_src.get("priority", "?"),
-                 (next_src.get("size", 0) or 0) / 1e6)
-        c.main_window.player_page.show_loader()
-        c.main_window.player_page.loader_label.setText(
-            f"ИСТОЧНИК {self._public_index + 1}/{len(direct)}..."
-        )
-        c.playback.play_url(
-            next_src["url"], c._current_movie_id, c._current_movie_title
-        )
+        c._try_next_direct()
 
     def _do_public_retry(self, epoch: int):
         self._public_retry_pending = False
 
-        # epoch-guard: если пользователь закрыл/перезапустил стрим за эти 5с —
-        # QTimer от старого стрима не должен трогать новый
         if epoch != self._public_epoch:
-            log.info("public retry: stream was reset (epoch %d != %d), skip",
+            log.info("public retry: stream reset (epoch %d != %d), skip",
                      epoch, self._public_epoch)
             return
 
         c = self.controller
-        if not c.stream_in_progress:
-            log.info("public retry: stream_in_progress=False, skip")
+        if not c._player_is_active():
+            log.info("public retry: player not active, skip")
             return
 
         direct = getattr(c, "_direct_fallback", None) or []
-        if not direct or self._public_index >= len(direct):
+        if not direct or c._direct_index >= len(direct):
             return
 
-        url = direct[self._public_index]["url"]
+        url = direct[c._direct_index]["url"]
         log.info("public retry: %s", url[:80])
         c.main_window.player_page.show_loader()
         c.playback.play_url(url, c._current_movie_id, c._current_movie_title)
 
     # ==================================================================
-    #  PRIVATE — ОРИГИНАЛ, НЕ ТРОНУТ
+    #  PRIVATE — оригинал, не тронут
     # ==================================================================
     async def _reload_after_delay(self):
         await asyncio.sleep(self.RELOAD_DELAY)
