@@ -309,21 +309,21 @@ Standalone-сборка сознательно **не** сделана как о
 | Тесты | pytest | Юнит-тесты |
 
 -
-## Architecture
+## Архитектура
 
 ```mermaid
 flowchart TD
-    UI["PyQt6 UI<br/>Feed / Details / Player"]
-    ORCH["Orchestrator<br/>Facade"]
+    UI["PyQt6 UI<br/>Лента / Детали / Плеер"]
+    ORCH["Оркестратор<br/>Facade"]
     FEED["FeedController"]
     DET["DetailsController"]
     STREAM["StreamController"]
     DB[("whitelist.db<br/>app_data.db")]
     IA["Internet Archive<br/>advancedsearch / metadata"]
-    LT["libtorrent<br/>private only"]
-    PS["psutil<br/>process manager"]
+    LT["libtorrent<br/>только private"]
+    PS["psutil<br/>управление процессами"]
 
-    UI -->|signals| ORCH
+    UI -->|сигналы| ORCH
     ORCH --> FEED
     ORCH --> DET
     ORCH --> STREAM
@@ -334,59 +334,49 @@ flowchart TD
     LT -.-> PS
 ```
 
-Layers:
-
-- **UI** — PyQt6 widgets, only rendering and signals
-- **Controllers** — feed, details, stream; orchestrate state
-- **Services** — Internet Archive search, metadata, playback
-- **Data** — SQLite databases and file caches
-
-The public mode touches only the Internet Archive branch. The
-libtorrent branch exists for private mode and is not used by
-regular builds.
-
-### Playback flow
-
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant UI as DetailsScreen
-    participant SC as StreamController
-    participant SE as ArchiveOrgSearcher
-    participant MD as MetadataFetcher
-    participant PB as QMediaPlayer
-
-    U->>UI: Start streaming
-    UI->>SC: start_streaming_requested(kp_id)
-    SC->>SE: search(title, year)
-    SE->>SE: query cascade (4 fallbacks)
-    SE->>SE: score candidates
-    SE->>MD: find_videos_parallel(identifiers)
-    MD-->>SE: best file per item
-    SE-->>SC: list of direct_url
-    SC->>SC: sort by (format priority, size)
-    SC->>PB: play_url(best)
-    alt Success
-        PB-->>U: video plays
-    else Retry fails
-        PB-->>SC: demux error
-        SC->>SC: retry 5s
-        SC->>PB: next candidate
-    end
-```
-
 Слои:
 
 - **UI** — виджеты PyQt6, только отрисовка и сигналы
 - **Контроллеры** — лента, детали, стрим; управляют состоянием
-- **Сервисы** — поиск по Internet Archive, метаданные,
-  воспроизведение
+- **Сервисы** — поиск по Internet Archive, метаданные, воспроизведение
 - **Данные** — базы SQLite и файловые кэши
 
 Public-режим касается только ветки Internet Archive. Ветка
 libtorrent существует для private-режима и не используется
 обычными сборками.
 
+### Поток воспроизведения
+
+```mermaid
+sequenceDiagram
+    participant U as Пользователь
+    participant UI as Экран деталей
+    participant SC as StreamController
+    participant SE as ArchiveOrgSearcher
+    participant MD as MetadataFetcher
+    participant PB as QMediaPlayer
+
+    U->>UI: Запустить трансляцию
+    UI->>SC: start_streaming_requested(kp_id)
+    SC->>SE: search(title, year)
+    SE->>SE: каскад запросов (4 fallback)
+    SE->>SE: скоринг кандидатов
+    SE->>MD: find_videos_parallel(identifiers)
+    MD-->>SE: лучший файл на элемент
+    SE-->>SC: список direct_url
+    SC->>SC: сортировка по (приоритет формата, размер)
+    SC->>PB: play_url(лучший)
+    alt Успех
+        PB-->>U: видео играет
+    else Повтор не помог
+        PB-->>SC: demux error
+        SC->>SC: повтор через 5 сек
+        SC->>PB: следующий кандидат
+    end
+```
+Public-режим касается только ветки Internet Archive. Ветка
+libtorrent существует для private-режима и не используется
+обычными сборками.
 ---
 
 ## Требования
