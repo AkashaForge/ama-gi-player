@@ -20,8 +20,8 @@
 
 | | |
 |---|---|
-| ![Тёмная 1](docs/screenshots/dark-01.png) | ![Тёмная 2](docs/screenshots/dark-02.png) |
-| ![Тёмная 3](docs/screenshots/dark-03.png) | ![Тёмная 4](docs/screenshots/dark-04.png) |
+| ![Тёмная 1](docs/screenshots/dark-01-v1.png) | ![Тёмная 2](docs/screenshots/dark-02-v1.png) |
+| ![Тёмная 3](docs/screenshots/dark-03-v1.png) | ![Тёмная 4](docs/screenshots/dark-04-v1.png) |
 
 </div>
 
@@ -31,7 +31,7 @@
 
 | | |
 |---|---|
-| ![Светлая 1](docs/screenshots/light-01.png) | ![Светлая 2](docs/screenshots/light-02.png) |
+| ![Светлая 1](docs/screenshots/light-01-v1.png) | ![Светлая 2](docs/screenshots/light-02-v1.png) |
 
 </div>
 
