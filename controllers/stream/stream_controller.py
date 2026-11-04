@@ -1,14 +1,27 @@
-"""StreamController — координатор. ~150 строк."""
+"""StreamController — координатор."""
 import asyncio
 
-import config
+from PyQt6.QtCore import QTimer
 
+import config
 from controllers.stream.buffer_monitor import BufferMonitor
 from controllers.stream.cascade import CascadeExecutor
 from controllers.stream.fallback import FallbackHandler
 from core.logging_setup import get_logger
 
 log = get_logger("stream")
+
+# Таймаут на остановку при закрытии. cancel() yield'ит через
+# asyncio.sleep, поэтому wait_for реально сработает.
+_CLOSE_STOP_TIMEOUT_SEC = 25.0
+
+# Watchdog: если _closing_in_progress залип дольше — сбрасываем.
+_CLOSING_WATCHDOG_MS = 30000
+
+# Задержка между stop_and_save() и cancel() — даём QMediaPlayer
+# отпустить file handle на Windows. libtorrent не может удалить
+# torrent, пока storage открыт.
+_PLAYER_RELEASE_DELAY_MS = 200
 
 
 class StreamController:
@@ -25,6 +38,8 @@ class StreamController:
 
         self.stream_session = None
         self.stream_in_progress = False
+        self._closing_in_progress = False
+        self._pending_start_kp_id = None
         self._current_movie_id = None
         self._current_movie_title = ""
         self._current_year = ""
@@ -66,8 +81,14 @@ class StreamController:
     # ==================================================================
     def handle_stream_start(self, kp_id: int):
         log.info("Старт стрима kp_id=%s", kp_id)
+
+        if self._closing_in_progress:
+            log.info("Старт отложен: идёт остановка, kp_id=%s", kp_id)
+            self._pending_start_kp_id = kp_id
+            return
         if self.stream_in_progress:
             return
+
         meta = self.app.details.current_movie_metadata
         if not meta or meta.get("kp_id") != kp_id:
             self.app.details.open(kp_id)
@@ -93,43 +114,90 @@ class StreamController:
         ))
 
     def handle_close_player(self, _seconds):
+        """Закрытие в 2 фазы.
+
+        Фаза 1: stop_and_save() — QMediaPlayer отпускает file handle.
+                На Windows это async внутри QMediaPlayer, но setSource
+                стартует процесс.
+        Фаза 2 (через 200ms): _start_close_async — запускает cancel()
+                стрима. За это время QMediaPlayer обычно отпускает
+                file handle, и libtorrent может удалить torrent.
+                Без этой паузы async_remove_torrent висит до 30s
+                (storage не закрыт).
+        """
         log.info("Закрытие плеера")
+        self._closing_in_progress = True
+        QTimer.singleShot(_CLOSING_WATCHDOG_MS, self._closing_watchdog)
+
+        # Фаза 1: отпускаем file handle
         if self.playback:
-            self.playback.stop_and_save()
-        self.loop.create_task(self._stop_resources())
-        self.stream_in_progress = False
-        self.fallback.reset()
-        self._online_sources = []
-        self._p2p_fallback = []
-        self._direct_fallback = []
-        self._direct_index = 0
-        self.main_window.screen_stack.setCurrentIndex(0)
-        self.app.details.check_resume_island()
+            try:
+                self.playback.stop_and_save()
+            except Exception as e:
+                log.debug("stop_and_save: %s", e)
+
+        # Фаза 2: через 200ms — async cancel
+        QTimer.singleShot(_PLAYER_RELEASE_DELAY_MS, self._start_close_async)
+
+    def _start_close_async(self):
+        self.loop.create_task(self._close_player_async())
+
+    def _closing_watchdog(self):
+        if not self._closing_in_progress:
+            return
+        log.warning("WATCHDOG: _closing_in_progress залип >%dms, сбрасываю",
+                    _CLOSING_WATCHDOG_MS)
+        self._closing_in_progress = False
+        pending = self._pending_start_kp_id
+        self._pending_start_kp_id = None
+        if pending is not None:
+            log.info("WATCHDOG: запуск отложенного старта kp_id=%s", pending)
+            self.handle_stream_start(pending)
+
+    async def _close_player_async(self):
+        try:
+            await asyncio.wait_for(
+                self._stop_resources(),
+                timeout=_CLOSE_STOP_TIMEOUT_SEC,
+            )
+        except asyncio.TimeoutError:
+            log.warning(
+                "close_player: _stop_resources timeout %.0fs",
+                _CLOSE_STOP_TIMEOUT_SEC,
+            )
+        except Exception as e:
+            log.debug("close_player stop: %s", e)
+        finally:
+            self.stream_in_progress = False
+            self.fallback.reset()
+            self._online_sources = []
+            self._p2p_fallback = []
+            self._direct_fallback = []
+            self._direct_index = 0
+            self.main_window.screen_stack.setCurrentIndex(0)
+            self.app.details.check_resume_island()
+            self._closing_in_progress = False
+            log.info("Плеер закрыт, ресурсы освобождены")
+
+            pending = self._pending_start_kp_id
+            self._pending_start_kp_id = None
+            if pending is not None:
+                log.info("Запуск отложенного старта kp_id=%s", pending)
+                self.handle_stream_start(pending)
 
     async def stop_all(self):
         await self._stop_resources()
 
     # ==================================================================
-    #  PUBLIC FALLBACK — переключение на следующий direct_url
+    #  PUBLIC FALLBACK
     # ==================================================================
     def _player_is_active(self) -> bool:
-        """Плеер реально на экране (индекс 2), а не закрыт юзером.
-
-        stream_in_progress не годится: он становится False сразу
-        после старта playback в cascade._dispatch, поэтому
-        проверка на него всегда блокировала бы Skip и auto-fallback.
-        """
         try:
             return self.main_window.screen_stack.currentIndex() == 2
         except Exception:
             return False
 
     def _try_next_direct(self):
-        """Public: переключиться на следующий direct_url из списка.
-
-        Вызывается из fallback.py после retry (5 сек) не помог
-        и из _do_skip (ручной Skip в public).
-        """
         if not self._player_is_active():
             log.info("direct: player not active, skip")
             return
@@ -179,12 +247,22 @@ class StreamController:
         self.buffer.start_p2p(lambda: self.stream_session)
 
     def on_failed(self, err: str):
+        """Без QMessageBox и без create_task в этом же тике.
+
+        QMessageBox — вложенный Qt event loop. Если on_failed
+        вызван синхронно из StreamSession.start() (внутри
+        CascadeExecutor.execute), вложенный цикл пытается крутить
+        pending-таски, пока execute() ещё в __step → RuntimeError
+        "Cannot enter into task X while another task Y is being
+        executed". Откладываем всё на следующий тик.
+        """
         log.error("FAILED: %s", err)
         self.stream_in_progress = False
         self.buffer.stop()
-        if self.stream_session:
-            self.loop.create_task(self.stream_session.cancel())
-            self.stream_session = None
+        QTimer.singleShot(0, lambda e=err: self._finalize_failure(e))
+
+    def _finalize_failure(self, err: str):
+        self.loop.create_task(self._stop_resources())
         self.main_window.player_page.loader_label.setText(f"ОШИБКА: {err}")
 
     def _update_bar(self, progress_str: str, speed_str: str):
@@ -209,16 +287,14 @@ class StreamController:
     async def _do_skip(self):
         log.info("Skip")
         if config.LEGAL_ONLY_MODE:
-            # Public: ручной skip = переключиться на следующий direct_url
             if not self._direct_fallback:
                 self.main_window.player_page.loader_label.setText(
                     "Альтернативных источников нет."
                 )
                 return
-            # Если уже на последнем — начинаем заново с первого
             if self._direct_index >= len(self._direct_fallback) - 1:
                 log.info("Skip: последний источник, начинаем с первого")
-                self._direct_index = -1  # _try_next_direct сдвинет на 0
+                self._direct_index = -1
             self.fallback.reset()
             self._try_next_direct()
             return
@@ -304,10 +380,17 @@ class StreamController:
         )
 
     async def _stop_resources(self):
+        """Идемпотентно.
+
+        Отвязываем ссылку ДО await, второй вызов сразу увидит None.
+        Это предотвращает двойной await session.cancel() при
+        параллельных вызовах (close + cascade._dispatch).
+        """
         self.buffer.stop()
-        if self.stream_session:
+        session = self.stream_session
+        self.stream_session = None
+        if session is not None:
             try:
-                await self.stream_session.cancel()
+                await session.cancel()
             except Exception as e:
                 log.debug("cancel: %s", e)
-            self.stream_session = None

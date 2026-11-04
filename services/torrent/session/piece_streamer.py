@@ -1,4 +1,11 @@
-"""PieceStreamer — чтение пиесов через read_piece_alert + fallback на файл."""
+"""PieceStreamer — чтение пиесов через read_piece_alert + fallback на файл.
+
+v2.0.24:
+  - polling 0.1 → 0.05 сек. Уменьшает задержку между
+    появлением piece и его отдачей в HTTP Range.
+  - read_piece через alert: sync handle.read_piece() обёрнут в
+    try/except с логированием. Не блокирует (обычно <1ms).
+"""
 import asyncio
 import time
 
@@ -82,7 +89,9 @@ class PieceStreamer:
                 log.warning("wait_piece %d timeout", piece)
                 return False
 
-            await asyncio.sleep(0.1)
+            # 0.05 вместо 0.1: меньше задержка между приходом piece
+            # и его отдачей в HTTP Range. Не блокирует event loop.
+            await asyncio.sleep(0.05)
 
     # ==================================================================
     #  READ
@@ -118,6 +127,7 @@ class PieceStreamer:
         timeout_sec = getattr(config, "STREAM_READ_PIECE_TIMEOUT_SEC", 8.0)
         try:
             try:
+                # sync C++ вызов, но быстрый (<1ms) — ставит в очередь
                 handle.read_piece(piece)
             except Exception as e:
                 log.debug("read_piece(%d): %s", piece, e)

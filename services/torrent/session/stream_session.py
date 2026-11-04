@@ -1,4 +1,4 @@
-"""StreamSession — координатор. ~230 строк.
+"""StreamSession — координатор. ~250 строк.
 
 Все тяжёлые части вынесены в:
   - HandleRegistry     (управление handle_info)
@@ -7,6 +7,21 @@
   - ReadyDetector      (выбор победителя по метрикам)
   - PieceStreamer      (wait_for_piece / read_piece)
   - AlertPump          (pop_alerts loop)
+
+v2.0.24:
+  - HANDLE_REMOVAL_TIMEOUT 3s → 15s. На Windows QMediaPlayer держит
+    file handle дольше — libtorrent не может удалить torrent, пока
+    storage открыт. 3s не хватало.
+  - Sync fallback после таймаута: remove_torrent(handle) для
+    оставшихся handles. Один sync-вызов быстрый (освобождение памяти),
+    не блокирует надолго.
+  - _cleanup_downloads: shutil.rmtree вынесен в executor.
+    Раньше sync rmtree в main thread блокировал UI на 25GB торрентах.
+  - alert_pump.stop() теперь async — успевает обработать removals.
+
+v2.0.23:
+  - cancel() ждёт фактического удаления handles из session.
+  - Диагностика "Session state before/after add" в start().
 """
 import asyncio
 import os
@@ -43,6 +58,8 @@ class StreamSession:
     READY_TIMEOUT = 30.0
     PRIORITY_TOP = 7
     DEADLINE_FIRST_PIECES = 3
+    HANDLE_REMOVAL_TIMEOUT = 15.0   # сколько ждём async-удаления
+    HANDLE_REMOVAL_POLL = 0.02      # шаг polling'а
 
     def __init__(self, http_session: aiohttp.ClientSession,
                  downloads_dir: str,
@@ -123,7 +140,22 @@ class StreamSession:
             candidates, extra_trackers=dynamic_trackers
         )
         unique = self._dedup_and_merge(groups, dynamic_trackers)
+
+        # Диагностика: должно быть 0, если предыдущий cancel() доработал
+        try:
+            before_count = len(self.session.get_torrents())
+        except Exception:
+            before_count = -1
+        log.info("Session state before add: %d torrents", before_count)
+
         await self._load_sources(unique)
+
+        try:
+            after_count = len(self.session.get_torrents())
+        except Exception:
+            after_count = -1
+        log.info("Session state after add: %d torrents, registry=%d",
+                 after_count, len(self.registry))
 
         if len(self.registry) == 0:
             self._fail("Не удалось добавить ни один источник")
@@ -308,7 +340,12 @@ class StreamSession:
         log.info("Startup: first_piece=%d adaptive=%d", first_piece, adaptive)
 
     def _remove_losers(self, winner_handle) -> None:
-        """v2.0.22: async_remove_torrent — не блокирует Qt."""
+        """async_remove_torrent — не блокирует Qt.
+
+        Losers уйдут из session при следующем pop_alerts
+        (alert_pump работает). До cancel() они не мешают —
+        add_torrent новых торрентов не происходит.
+        """
         removed = 0
         kept = 0
         for info in list(self.registry):
@@ -330,6 +367,7 @@ class StreamSession:
                 pass
             self.registry.remove(info.handle)
         log.info("Removed %d, kept %d (grace)", removed, kept - 1)
+
     # ==================================================================
     #  ПРИОРИТЕТЫ
     # ==================================================================
@@ -379,7 +417,7 @@ class StreamSession:
         return max(min_p, min(max_p, from_bytes))
 
     def _kill_handle(self, handle) -> None:
-        """v2.0.22: callback для ReadyDetector — non-blocking."""
+        """callback для ReadyDetector — non-blocking."""
         try:
             self.session.async_remove_torrent(handle)
         except Exception:
@@ -417,10 +455,28 @@ class StreamSession:
         return self.monitor.latest
 
     async def cancel(self):
+        """v2.0.24: async removal + гарантированное ожидание + sync fallback.
+
+        async_remove_torrent только ставит в очередь. Удаление
+        происходит при следующем pop_alerts. Раньше alert_pump
+        останавливался ДО удаления → queue не обрабатывалась →
+        handles висели в session → следующий add_torrent с тем же
+        info_hash возвращал «тень» → meta=N peers=0.
+
+        Теперь:
+          1. Останавливаем piece_streamer/monitor/http_server (не pump)
+          2. async_remove_torrent для своих handles
+          3. polling get_torrents() до 15s — alert_pump ещё жив,
+             обрабатывает queue
+          4. Если polling не помог — sync remove_torrent fallback
+             (один вызов, освобождение памяти, быстрый)
+          5. Останавливаем pump (async, yield перед cancel)
+          6. Чистим downloads_dir в executor (не блокирует UI)
+        """
         self._cancelled = True
         self._ready = False
         self.piece_streamer.cancel_all()
-        self.alert_pump.stop()
+        # pump НЕ стопаем — он обрабатывает removals
         if self.monitor:
             try:
                 self.monitor.stop()
@@ -432,14 +488,64 @@ class StreamSession:
             except Exception:
                 pass
             self.http_server = None
+
+        # Ставим в очередь async-удаление
         for info in self.registry:
             try:
-                self.session.async_remove_torrent(info.handle)  # non-blocking
-            except Exception:
-                pass
+                self.session.async_remove_torrent(info.handle)
+            except Exception as e:
+                log.debug("async_remove_torrent: %s", e)
         self.registry.clear()
         self.handle = None
+
+        # Ждём фактического удаления (pump обрабатывает pop_alerts)
+        await self._wait_handles_removed()
+
+        # Теперь можно остановить pump (async — успеет доделать queue)
+        try:
+            await self.alert_pump.stop()
+        except Exception as e:
+            log.debug("alert_pump.stop: %s", e)
+
         await self._cleanup_downloads()
+
+    async def _wait_handles_removed(self) -> None:
+        """Ждёт, пока session.get_torrents() не вернёт пустой список.
+
+        После таймаута — sync remove_torrent fallback для оставшихся.
+        Один sync-вызов быстрый (освобождение памяти), не блокирует
+        main thread надолго. Альтернатива (оставить handles висеть) —
+        следующий add_torrent с тем же info_hash вернёт «тень».
+        """
+        deadline = time.time() + self.HANDLE_REMOVAL_TIMEOUT
+        while time.time() < deadline:
+            try:
+                remaining = len(self.session.get_torrents())
+            except Exception as e:
+                log.debug("wait_handles_removed: %s", e)
+                return
+            if remaining == 0:
+                return
+            await asyncio.sleep(self.HANDLE_REMOVAL_POLL)
+
+        # Fallback: sync remove оставшихся
+        try:
+            remaining_handles = list(self.session.get_torrents())
+        except Exception:
+            return
+        if not remaining_handles:
+            return
+        log.warning(
+            "cancel: async_remove_torrent не удалил за %.1fs — "
+            "sync remove для %d handles",
+            self.HANDLE_REMOVAL_TIMEOUT, len(remaining_handles),
+        )
+        for h in remaining_handles:
+            try:
+                self.session.remove_torrent(h)
+            except Exception as e:
+                log.debug("sync remove_torrent: %s", e)
+
     # ==================================================================
     #  СЛУЖЕБНОЕ
     # ==================================================================
@@ -460,10 +566,19 @@ class StreamSession:
         return path
 
     async def _cleanup_downloads(self) -> None:
-        if self.downloads_dir and os.path.isdir(self.downloads_dir):
-            await asyncio.sleep(0.5)
-            try:
-                shutil.rmtree(self.downloads_dir, ignore_errors=True)
-            except Exception:
-                pass
+        """Удаляет downloads_dir в executor, не блокируя main thread.
+
+        Раньше shutil.rmtree вызывался sync — для 25GB торрента
+        блокировал Qt event loop на секунды → «окно не отвечает».
+        """
+        if not (self.downloads_dir and os.path.isdir(self.downloads_dir)):
+            self.downloads_dir = ""
+            return
+        path = self.downloads_dir
         self.downloads_dir = ""
+        await asyncio.sleep(0.5)
+        loop = asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(None, shutil.rmtree, path, True)
+        except Exception as e:
+            log.debug("rmtree %s: %s", path, e)
