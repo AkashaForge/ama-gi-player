@@ -1,16 +1,4 @@
-"""Лента фильмов.
-
-v2.0.5:
-  - защита от бесконечного цикла пагинации: после загрузки карточек
-    флаг _is_loading_next не сбрасывается до тех пор, пока QScrollArea
-    не пересчитает max_scroll (layout перестраивается асинхронно,
-    и старый сброс приводил к valueChanged с новым max при старом
-    value → пользователь «в конце» → снова emit → цикл);
-  - _end_reached: после has_more=False emit блокируется до нового
-    поиска / clear_grid;
-  - reset_loading_state() используется только для жёсткого сброса
-    (clear_grid / run_search).
-"""
+'''Лента фильмов.'''
 
 # Amagi-Player — desktop media player for public-domain content
 # Copyright (C) 2026 AkashaForge
@@ -104,6 +92,33 @@ class MovieFeedWidget(QWidget):
         self._is_loading_next = False
         self._last_max_scroll = 0
 
+    def reset_loading_flag(self):
+        """Снять флаг загрузки, не трогая _last_max_scroll.
+        Нужно, когда страница вернула 0 новых карточек."""
+        self._is_loading_next = False
+
+    def begin_batch(self):
+        """Пакетное добавление карточек.
+
+        - blockSignals на скроллбаре: во время добавления QScrollArea
+          пересчитывает max_scroll, внутренние setValue дёргают
+          valueChanged, и _on_scroll_moved может сработать посреди
+          батча (преждевременный next_page_requested, прыжок value);
+        - setUpdatesEnabled(False): один paint в конце вместо N.
+        """
+        self.scroll_area.verticalScrollBar().blockSignals(True)
+        self.grid_container.setUpdatesEnabled(False)
+
+    def end_batch(self):
+        """Один пересчёт layout и один кадр отрисовки.
+
+        adjustSize() ДО включения отрисовки — чтобы первый же paint
+        нарисовал финальную геометрию без промежуточных «прыжков».
+        """
+        self.grid_container.adjustSize()
+        self.grid_container.setUpdatesEnabled(True)
+        self.scroll_area.verticalScrollBar().blockSignals(False)
+
     def mark_end_reached(self):
         """Вызывается контроллером, когда has_more=False.
         Блокирует новые emit до clear_grid / run_search."""
@@ -123,9 +138,8 @@ class MovieFeedWidget(QWidget):
         idx = self.grid_layout.count()
         row, col = idx // 4, idx % 4
         self.grid_layout.addWidget(card_widget, row, col)
-        # Принудительно пересчитать layout, чтобы QScrollArea быстрее
-        # обновила max_scroll (иначе valueChanged придёт с задержкой)
-        self.grid_container.adjustSize()
+        # Пересчёт layout делается один раз в end_batch() — иначе
+        # adjustSize на каждую карточку даёт «прыгающую» волну.
         return True
 
     def clear_grid(self):

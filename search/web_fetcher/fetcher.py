@@ -26,8 +26,10 @@ class WebFetcher:
                 or os.environ.get("HTTP_PROXY")
                 or os.environ.get("http_proxy")
             )
-        log.info("Прокси: %s" if self._proxy_url else "Прокси не задан",
-                 self._proxy_url or "")
+        if self._proxy_url:
+            log.info("Прокси: %s", self._proxy_url)
+        else:
+            log.info("Прокси не задан")
 
         self.http = HttpCascade(proxy_url=self._proxy_url)
         self.browser = BrowserFetcher(chrome_path)

@@ -1,8 +1,4 @@
-"""Контроллер ленты.
-
-Изменения v2.0.6:
-  - _pagination_lock: race condition при быстром скролле страниц.
-"""
+"""Контроллер ленты."""
 
 # Amagi-Player — desktop media player for public-domain content
 # Copyright (C) 2026 AkashaForge
@@ -81,7 +77,7 @@ class FeedController:
         self._db_stats_logged = False
         self._pagination_lock = asyncio.Lock()
 
-    async def load_feed(self, clear_grid: bool = False):
+    async def load_feed(self, clear_grid: bool = False) -> int:
         if clear_grid:
             self.main_window.feed_page.clear_grid()
             self.main_window.feed_page.reset_loading_state()
@@ -115,7 +111,7 @@ class FeedController:
 
         if generation != self._search_generation:
             self.main_window.feed_page.reset_loading_state()
-            return
+            return 0
 
         log.info(
             "Лента: page=%d, %d фильмов (mode=%s, query='%s', has_more=%s)",
@@ -134,29 +130,35 @@ class FeedController:
                 pass
 
         added_count = 0
-        for data in movies:
-            kp_id = data.get("kp_id")
-            if not kp_id:
-                continue
-            card = MovieCardWidget(
-                kp_id=kp_id,
-                title=data.get("title", "Без названия"),
-                year=data.get("year", "----"),
-                cover_path=data.get("cover_path", ""),
-            )
-            card.play_requested.connect(self._on_card_clicked)
-            added = self.main_window.feed_page.add_card_to_grid(card)
-            if added:
-                added_count += 1
-                if not data.get("cover_path"):
-                    self.loop.create_task(
-                        self._load_poster_cascade(
-                            kp_id, card,
-                            title=data.get("title", ""),
-                            title_en=data.get("title_en", ""),
-                            year=data.get("year", ""),
+        # Пакетное добавление: карточки появляются одним кадром, без
+        # «прыгающей» волны от adjustSize на каждой карточке.
+        self.main_window.feed_page.begin_batch()
+        try:
+            for data in movies:
+                kp_id = data.get("kp_id")
+                if not kp_id:
+                    continue
+                card = MovieCardWidget(
+                    kp_id=kp_id,
+                    title=data.get("title", "Без названия"),
+                    year=data.get("year", "----"),
+                    cover_path=data.get("cover_path", ""),
+                )
+                card.play_requested.connect(self._on_card_clicked)
+                added = self.main_window.feed_page.add_card_to_grid(card)
+                if added:
+                    added_count += 1
+                    if not data.get("cover_path"):
+                        self.loop.create_task(
+                            self._load_poster_cascade(
+                                kp_id, card,
+                                title=data.get("title", ""),
+                                title_en=data.get("title_en", ""),
+                                year=data.get("year", ""),
+                            )
                         )
-                    )
+        finally:
+            self.main_window.feed_page.end_batch()
 
         if not has_more:
             self.main_window.feed_page.mark_end_reached()
@@ -164,6 +166,8 @@ class FeedController:
                 "Больше страниц нет (page=%d), лента закрыта",
                 self.current_page,
             )
+
+        return added_count
 
     def _log_db_stats(self):
         try:
@@ -416,11 +420,22 @@ class FeedController:
             log.debug("load_next_page: уже загружается, пропускаем")
             return
         async with self._pagination_lock:
+            prev_page = self.current_page
             self.current_page += 1
             try:
-                await self.load_feed(clear_grid=False)
+                added = await self.load_feed(clear_grid=False)
             except Exception as e:
                 log.warning("load_next_page: %s", e)
+                self.current_page = prev_page  # откат страницы при ошибке
+                self.main_window.feed_page.reset_loading_flag()
+                return
+
+            feed = self.main_window.feed_page
+            # Страница пустая / всё дубликаты, и это не конец ленты —
+            # снимаем залипший флаг, иначе скролл больше не триггерит
+            # следующую страницу.
+            if added == 0 and not feed._end_reached:
+                feed.reset_loading_flag()
 
     def _on_card_clicked(self, kp_id: int):
         log.info("Клик: kp_id=%s", kp_id)
