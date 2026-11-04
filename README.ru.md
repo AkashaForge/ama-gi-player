@@ -4,13 +4,34 @@
 
 # Amagi-Player
 
-**Десктоп-плеер для поиска и воспроизведения фильмов общественного достояния из открытых архивов.**
+**Смотрите кино общественного достояния из Internet Archive — прямо на рабочем столе.**
 
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20(exp)-lightgrey)]()
+[![Latest Release](https://img.shields.io/github/v/release/AkashaForge/ama-gi-player?style=flat-square&color=success)](https://github.com/AkashaForge/ama-gi-player/releases)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/AkashaForge/ama-gi-player/release.yml?style=flat-square&branch=main)](https://github.com/AkashaForge/ama-gi-player/actions/workflows/release.yml)
+[![License: GPLv3](https://img.shields.io/badge/license-GPLv3-blue?style=flat-square)](https://www.gnu.org/licenses/gpl-3.0)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey?style=flat-square)]()
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](http://makeapullrequest.com)
 
 </div>
+
+<p align="center">
+  <a href="#возможности">Возможности</a> •
+  <a href="#быстрый-старт">Быстрый старт</a> •
+  <a href="#установка">Установка</a> •
+  <a href="#использование">Использование</a> •
+  <a href="#архитектура">Архитектура</a> •
+  <a href="#faq">FAQ</a> •
+  <a href="#участие-в-разработке">Участие</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/AkashaForge/ama-gi-player/releases/latest">
+    <img src="https://img.shields.io/badge/Скачать-Windows%20%7C%20Linux-brightgreen?style=for-the-badge" alt="Download"/>
+  </a>
+</p>
+
+---
 
 ## Скриншоты
 
@@ -20,20 +41,50 @@
 
 | | |
 |---|---|
-| ![Тёмная 1](docs/screenshots/dark-01.png) | ![Тёмная 2](docs/screenshots/dark-02.png) |
-| ![Тёмная 3](docs/screenshots/dark-03.png) | ![Тёмная 4](docs/screenshots/dark-04.png) |
+| ![Тёмная 1](docs/screenshots/dark-01-v1.png) | ![Тёмная 2](docs/screenshots/dark-02-v1.png) |
+| ![Тёмная 3](docs/screenshots/dark-03-v1.png) | ![Тёмная 4](docs/screenshots/dark-04-v1.png) |
 
 </div>
 
-### Светлая тема (Aurora Glass)
+### Светлая тема (Gallery Editorial)
 
 <div align="center">
 
 | | |
 |---|---|
-| ![Светлая 1](docs/screenshots/light-01.png) | ![Светлая 2](docs/screenshots/light-02.png) |
+| ![Светлая 1](docs/screenshots/light-01-v1.png) | ![Светлая 2](docs/screenshots/light-02-v1.png) |
 
 </div>
+
+---
+
+<details>
+<summary><strong>Содержание</strong></summary>
+
+- [О проекте](#о-проекте)
+- [Название](#название)
+- [Возможности](#возможности)
+- [Быстрый старт](#быстрый-старт)
+- [Установка](#установка)
+- [Использование](#использование)
+- [Как это работает](#как-это-работает)
+- [Конкурентность и контроль процессов](#конкурентность-и-контроль-процессов)
+- [Как собирается релиз](#как-собирается-релиз)
+- [Технологический стек](#технологический-стек)
+- [Архитектура](#архитектура)
+- [Конфигурация](#конфигурация)
+- [Диагностика](#диагностика)
+- [Решение проблем](#решение-проблем)
+- [FAQ](#faq)
+- [Разработка](#разработка)
+- [Структура проекта](#структура-проекта)
+- [Планы](#планы)
+- [Участие в разработке](#участие-в-разработке)
+- [Благодарности](#благодарности)
+- [Правовая информация](#правовая-информация)
+- [Лицензия](#лицензия)
+
+</details>
 
 ---
 
@@ -75,7 +126,9 @@ HTTP-доставкой файлов. Amagi-Player использует штат
 контенте общественного достояния.
 
 - Курированная лента фильмов общественного достояния, поставляется
-  вместе с релизом и доступна офлайн
+  вместе с релизом и доступна офлайн (~130 фильмов: ранний Чаплин,
+  немецкий экспрессионизм, американская классика с истёкшим
+  копирайтом)
 - Поиск по названию в локальном каталоге
 - Каскад постеров: локальный кэш → постеры из релиза →
   Internet Archive → опционально Кинопоиск
@@ -83,8 +136,10 @@ HTTP-доставкой файлов. Amagi-Player использует штат
 - Стриминг напрямую с `archive.org/download/...` через
   QMediaPlayer + FFmpeg (с HTTP Range для перемотки)
 - Функция «Продолжить просмотр» на основе локальной истории
-- Две темы интерфейса (тёмная OLED, светлая Aurora Glass)
-- Двуязычный интерфейс (русский / английский)
+- Две темы интерфейса (тёмная OLED, светлая Gallery Editorial)
+- **Двуязычный поиск по контенту** (EN / RU) — кнопка EN/RU в шапке
+  переключает **язык поиска** (какие фильмы показывать), а не язык
+  интерфейса. Интерфейс пока только на русском.
 - Без аналитики, телеметрии и аккаунтов
 
 ### Private-режим — экспериментальный, только для разработчиков
@@ -106,6 +161,7 @@ Private-режим — это экспериментальная площадк�
   на публичных трекерах
 - Пользовательские списки трекеров через `data/tracker_balancers.txt`
 - Мультиисточниковый поиск с составным health-score
+- Опциональная интеграция с TorAPI (требует подписки)
 
 Ничего из этого не требуется для public-режима. Если вы
 пользователь — оставайтесь в public.
@@ -114,13 +170,97 @@ Private-режим — это экспериментальная площадк�
 
 - Асинхронная архитектура на `asyncio` + `qasync` — интерфейс не
   блокируется во время поиска, буферизации и воспроизведения
-- Блокирующий I/O (чтение файлов кэша, запись постеров) вынесен в
-  `run_in_executor` — event loop никогда не блокируется
+- Блокирующий I/O (чтение файлов кэша, запись постеров, очистка
+  торрентов) вынесен в `run_in_executor` — event loop asyncio
+  остаётся отзывчивым
+- QMediaPlayer API синхронный по дизайну Qt; вызовы воспроизведения
+  обёрнуты в `QTimer.singleShot` где возможно, но короткая задержка
+  UI при остановке медиа — известное ограничение Qt
 - Контроль дочерних процессов через `psutil` — «повисшие»
   процессы завершаются корректно
 - LRU-кэш метаданных Internet Archive с TTL
 - Аккуратное завершение работы с очисткой дочерних процессов,
   кэшей и фоновых задач
+
+---
+
+## Быстрый старт
+
+**Windows** (требуется Windows 10/11):
+
+1. Скачайте [latest release](https://github.com/AkashaForge/ama-gi-player/releases/latest)
+2. Распакуйте архив в любую папку
+3. Запустите `amagi-player.exe`
+
+Каталог фильмов поставляется вместе с релизом — первое
+воспроизведение доступно сразу.
+
+**Из исходников** (Python 3.10+):
+
+```bash
+git clone https://github.com/AkashaForge/ama-gi-player.git
+cd ama-gi-player
+python -m venv .venv
+.venv\Scripts\activate          # Windows
+# source .venv/bin/activate     # Linux
+pip install -r requirements.txt
+python main.py
+```
+
+---
+
+## Установка
+
+### Из Releases (рекомендуется)
+
+1. Скачайте архив со страницы [**Releases**](https://github.com/AkashaForge/ama-gi-player/releases)
+2. Распакуйте в любую папку
+3. Запустите `amagi-player` (Windows: `amagi-player.exe`)
+4. Примите условия использования
+
+Локальный каталог `data/whitelist.db` поставляется в архиве уже
+заполненным — он копируется из `data/whitelist_seed.db` при сборке.
+Если его удалить, при следующем запуске будет создана пустая
+таблица и лента останется пустой до восстановления — см.
+`tools/apply_seed.py` в исходниках.
+
+### Из исходников
+
+```bash
+git clone https://github.com/AkashaForge/ama-gi-player.git
+cd ama-gi-player
+python -m venv .venv
+.venv\Scripts\activate        # Windows
+pip install -r requirements.txt
+python main.py
+```
+
+### Требования
+
+- **Windows 10/11** — поддерживается
+- **Linux** — экспериментальная сборка в том же релизе, не
+  тестировалась на всех дистрибутивах; требует системных
+  библиотек (см. `README-LINUX.txt` в архиве)
+- ~300 МБ свободного места под архив, ~500 МБ в распакованном виде
+- Доступ в интернет для поиска и воспроизведения
+- Python 3.10+ (только для запуска из исходников)
+
+---
+
+## Использование
+
+1. Запустите приложение и примите условия использования.
+2. Пролистайте ленту или введите поисковый запрос.
+3. Кликните по карточке — откроется экран деталей.
+4. Нажмите **«Запустить трансляцию»** — воспроизведение начнётся
+   автоматически.
+5. Используйте встроенный плеер: пауза, перемотка, полный экран.
+6. Чтобы вернуться к фильму позже — «Продолжить просмотр» на
+   главном экране.
+
+Кнопка EN/RU в шапке переключает **язык поиска** (какие фильмы
+показывать). Сам интерфейс пока только на русском — английская
+локализация в [планах](#планы).
 
 ---
 
@@ -163,8 +303,8 @@ Public-режим состоит из двух этапов: **лента** (л�
 году без фильтра по типу; по названию и типу медиа без года; и
 только по названию. Каждый fallback нужен потому, что у части
 записей архива нет поля `year` или `mediatype`, и строгий первый
-запрос их бы отсеял. Год сопоставляется с небольшим допуском —
-метаданные архива часто ошибаются на год-два.
+запрос их бы отсеял. Год сопоставляется с небольшим допуском
+(±2 года) — метаданные архива часто ошибаются на год-два.
 
 **2. Сбор кандидатов.** Каждый запрос возвращает пул кандидатов.
 Вместо того чтобы брать несколько верхних по популярности, плеер
@@ -200,7 +340,7 @@ Public-режим состоит из двух этапов: **лента** (л�
 **5. Воспроизведение с повтором.** Плеер берёт лучшего кандидата и
 запускает воспроизведение. Если стрим упал — сетевой сбой, 5xx от
 CDN архива или неподдерживаемый контейнер — плеер повторяет
-запрос к тому же URL один раз через короткую задержку. Это
+запрос к тому же URL один раз через короткую задержку (5 сек). Это
 покрывает временные ошибки CDN, которые archive.org иногда
 возвращает.
 
@@ -222,7 +362,9 @@ CDN архива или неподдерживаемый контейнер — 
   есть несколько элементов
 - **LRU-кэш метаданных** — повторные поиски не дёргают архив
   заново
-- **Никаких блокирующих вызовов** в UI-потоке
+- **Никаких блокирующих вызовов** в UI-потоке для поиска и
+  метаданных; QMediaPlayer API остаётся синхронным по дизайну Qt
+  и минимизирован через `QTimer.singleShot`
 
 ### Дополнительно
 
@@ -231,7 +373,9 @@ CDN архива или неподдерживаемый контейнер — 
 - **История просмотров** — в `data/app_data.db`, обеспечивает
   «Продолжить просмотр»
 
-### Конкурентность и контроль процессов
+---
+
+## Конкурентность и контроль процессов
 
 Приложение работает на одном событийном цикле, общем для Qt и
 asyncio. Мост — **qasync**: он позволяет циклу Qt управлять
@@ -241,9 +385,15 @@ asyncio. Мост — **qasync**: он позволяет циклу Qt упра
 Сетевая работа — поиск, метаданные, загрузка постеров — написана
 как `async` / `await`. Интерфейс остаётся отзывчивым, пока она
 выполняется. Работа, которую нельзя сделать асинхронной (чтение
-файла, запись постера, обращение к кэшу), выносится в пул потоков
-через `run_in_executor`. Event loop никогда не блокируется
-системным вызовом.
+файла, запись постера, обращение к кэшу, очистка папки загрузок
+торрента), выносится в пул потоков через `run_in_executor`.
+Event loop asyncio не блокируется системным вызовом.
+
+QMediaPlayer API синхронный по дизайну Qt. Вызовы воспроизведения,
+которые могут быть медленными (`setSource`, `stop`), обёрнуты в
+`QTimer.singleShot` где возможно, чтобы отдать управление main
+thread, но короткая задержка UI при остановке медиа — известное
+ограничение Qt, а не баг Amagi-Player.
 
 Дочерние процессы, которые запускает поисковый конвейер —
 Jackett в private-режиме, headless-браузеры через `nodriver` —
@@ -304,11 +454,16 @@ Standalone-сборка сознательно **не** сделана как о
 | HTTP | aiohttp | Асинхронные запросы к Internet Archive |
 | Медиа | QMediaPlayer + FFmpeg | Воспроизведение |
 | Процессы | psutil | Управление дочерними процессами |
+| XML safety | defusedxml | Безопасный парсинг Torznab (private) |
 | Стриминг (private) | libtorrent | BitTorrent-воспроизведение (экспериментально) |
+| HTTP fallback (private) | cloudscraper, curl_cffi | Каскад обхода Cloudflare |
+| Браузерная автоматизация (private) | nodriver | Headless-парсинг сайтов (private) |
+| Транспорт (private) | websockets | Транспорт для nodriver |
 | Сборка | Nuitka | Python → C → нативный исполняемый файл |
 | Тесты | pytest | Юнит-тесты |
 
--
+---
+
 ## Архитектура
 
 ```mermaid
@@ -345,7 +500,7 @@ Public-режим касается только ветки Internet Archive. В�
 libtorrent существует для private-режима и не используется
 обычными сборками.
 
-### Поток воспроизведения
+### Поток воспроизведения (public-режим)
 
 ```mermaid
 sequenceDiagram
@@ -374,68 +529,6 @@ sequenceDiagram
         SC->>PB: следующий кандидат
     end
 ```
-Public-режим касается только ветки Internet Archive. Ветка
-libtorrent существует для private-режима и не используется
-обычными сборками.
----
-
-## Требования
-
-- **Windows 10/11** — поддерживается
-- **Linux** — экспериментальная сборка в том же релизе, не
-  тестировалась на всех дистрибутивах; требует системных
-  библиотек (см. `README-LINUX.txt` в архиве)
-- ~300 МБ свободного места под архив, ~500 МБ в распакованном виде
-- Доступ в интернет для поиска и воспроизведения
-
-Для **запуска из исходников** дополнительно нужен Python 3.10+.
-
----
-
-## Установка
-
-### Из Releases (рекомендуется)
-
-1. Скачайте архив со страницы [**Releases**](https://github.com/AkashaForge/ama-gi-player/releases)
-2. Распакуйте в любую папку
-3. Запустите `amagi-player` (Windows: `amagi-player.exe`)
-4. Примите условия использования
-
-Локальный каталог `data/whitelist.db` поставляется в архиве уже
-заполненным. Если его удалить, при следующем запуске будет создана
-пустая таблица и лента останется пустой до восстановления — см.
-`tools/apply_seed.py` в исходниках.
-
-### Из исходников
-
-```bash
-git clone https://github.com/AkashaForge/ama-gi-player.git
-cd ama-gi-player
-python -m venv .venv
-.venv\Scripts\activate        # Windows
-pip install -r requirements.txt
-python main.py
-```
-
-### Для разработки
-
-```bash
-pip install -r requirements-dev.txt
-pytest
-```
-
----
-
-## Использование
-
-1. Запустите приложение и примите условия использования.
-2. Пролистайте ленту или введите поисковый запрос.
-3. Кликните по карточке — откроется экран деталей.
-4. Нажмите **«Запустить трансляцию»** — воспроизведение начнётся
-   автоматически.
-5. Используйте встроенный плеер: пауза, перемотка, полный экран.
-6. Чтобы вернуться к фильму позже — «Продолжить просмотр» на
-   главном экране.
 
 ---
 
@@ -470,15 +563,21 @@ Archive. Отсутствие ключа ничего не ломает.
 ## Диагностика
 
 Приложение выводит диагностические сообщения в консоль
-(открывается вместе с исполняемым файлом). Полезные строки:
+(открывается вместе с исполняемым файлом). Большинство
+сообщений — на русском; таблица ниже расшифровывает их
+назначение.
 
 | Строка в логе | Что означает |
 |---|---|
-| `Mode: PUBLIC` | Активен public-режим |
-| `Feed: page=N, M films` | Лента загружена |
-| `IA query: ...` | Запрос к Internet Archive |
-| `IA result: N direct_url` | Найдено N воспроизводимых кандидатов |
+| `[CONFIG] Режим: PUBLIC` | Активен public-режим |
+| `[CONFIG] Режим: PRIVATE` | Активен private-режим |
+| `Лента: page=N, M фильмов` | Страница ленты загружена |
+| `IA query: title:(...)` | Запрос к Internet Archive |
+| `IA итог: N direct_url` | Найдено N воспроизводимых кандидатов |
+| `StreamSession ready` | P2P-поток настроен, начинается воспроизведение (private) |
+| `wait_piece N: X.Xs` | Ожидание piece N в течение X.X секунд (private) |
 | `DEMUX ERROR` | Ошибка воспроизведения — последует retry или fallback |
+| `WATCHDOG: Xs, rate=Y, peers=Z → fallback` | Буфер застрял, переключение на следующий источник |
 
 Если приложение не запускается — запустите его из PowerShell,
 чтобы увидеть полный traceback:
@@ -490,31 +589,413 @@ cd <папка>
 
 ---
 
+## Решение проблем
+
+### Приложение не запускается на Windows
+
+Windows SmartScreen может блокировать незнакомый `.exe`:
+
+1. Правый клик на `amagi-player.exe` → **Свойства**
+2. Внизу вкладки **Общие** — галочка **Разблокировать**
+3. OK → запустить заново
+
+Если не помогло — запустить из PowerShell, чтобы увидеть
+traceback:
+
+```powershell
+cd C:\путь\к\amagi-player
+.\amagi-player.exe
+```
+
+### Антивирус удаляет `amagi-player.exe`
+
+Nuitka-сборки иногда ложно детектируются антивирусами (нет
+подписи кода). Это известная проблема Python-приложений.
+Решения:
+
+- Добавить папку в исключения антивируса
+- Скачать из официального релиза (не сторонних зеркал)
+- Собрать из исходников — см.
+  [Как собирается релиз](#как-собирается-релиз)
+
+Подпись кода запланирована — см. [Планы](#планы).
+
+### Linux: `error while loading shared libraries`
+
+Установить системные библиотеки:
+
+```bash
+sudo apt install libxcb-cursor0 libegl1 libgl1 libnss3 libasound2 ffmpeg
+```
+
+Полный список — в `README-LINUX.txt` внутри архива.
+
+### Нет звука
+
+1. Проверить системный микшер — приложение не блокирует звук
+2. **Настройки → Звук** — правильно ли выбрано устройство вывода
+3. Некоторые фильмы — немое кино (до 1930), в источнике
+   может не быть звуковой дорожки. Это норма, не баг.
+
+### Поиск не находит фильм
+
+Проверить:
+
+- Убрать год из запроса
+- Кнопка EN/RU в шапке переключает **язык контента**, не
+  интерфейса — проверить, что выбрано правильно
+- Лог в консоли: строка `IA query: ...` покажет реальный запрос,
+  отправленный в архив
+
+### «Окно не отвечает» при переключении фильмов
+
+Известное ограничение Windows Media Foundation: `QMediaPlayer`
+держит file handle дольше, чем хотелось бы, и libtorrent не может
+удалить торрент до освобождения storage. В коде есть sync fallback
+через 15 секунд — подождите, переключение завершится.
+
+Для более плавной работы — переключиться на FFmpeg backend через
+переменную окружения перед запуском:
+
+```powershell
+$env:QT_MEDIA_BACKEND = "ffmpeg"
+.\amagi-player.exe
+```
+
+FFmpeg делает демуксинг в отдельном потоке, что обходит блокировку
+main thread при остановке. Это не включено по умолчанию, потому
+что не тестировалось на всех конфигурациях Windows.
+
+---
+
+## FAQ
+
+<details>
+<summary><strong>Это легально?</strong></summary>
+
+Да. Приложение работает только с контентом общественного достояния
+(public domain) из Internet Archive — открытого архива с миллионами
+свободных произведений. Приложение не хранит и не распространяет
+произведения — это клиент к открытому API архива. Подробности — в
+разделе [Правовая информация](#правовая-информация).
+
+</details>
+
+<details>
+<summary><strong>Где взять фильмы?</strong></summary>
+
+Нигде не нужно «брать» — каталог поставляется в архиве. Это около
+130 фильмов, проверенных на статус public domain (Чаплин 1914–1919,
+немецкий экспрессионизм, американская классика с истёкшим
+копирайтом). Поиск работает по этому каталогу.
+
+Если хочется больше — можно перейти в `private`-режим (см.
+[Конфигурация](#конфигурация)) и подключить внешние источники.
+Но это экспериментальный режим для разработчиков.
+
+</details>
+
+<details>
+<summary><strong>Почему нет английского интерфейса?</strong></summary>
+
+Кнопка EN/RU в шапке переключает **язык поиска** (какие фильмы
+показывать), а не язык интерфейса. Интерфейс пока на русском.
+Локализация в [планах](#планы).
+
+</details>
+
+<details>
+<summary><strong>Как сменить тему?</strong></summary>
+
+Кнопка «✦ СВЕТЛАЯ ТЕМА» / «✦ ТЁМНАЯ ТЕМА» внизу главного экрана.
+Две темы: тёмная OLED (по умолчанию) и светлая Gallery Editorial.
+
+</details>
+
+<details>
+<summary><strong>Можно ли скачать фильм, а не смотреть онлайн?</strong></summary>
+
+Прямой функции «скачать» нет. Но стриминг идёт с
+`archive.org/download/...` — открытого URL, который можно скачать
+любым менеджером загрузок. Лог в консоли покажет точный URL.
+
+</details>
+
+<details>
+<summary><strong>Приложение собирает мои данные?</strong></summary>
+
+Нет. Никакой аналитики, телеметрии, аккаунтов. Все данные —
+локально: история просмотров в `data/app_data.db`, кэш постеров
+в `data/cache/`. Сетевые запросы — только к Internet Archive (и
+Kinopoisk, если ключ задан).
+
+</details>
+
+<details>
+<summary><strong>Что такое `mode.txt`?</strong></summary>
+
+Файл `data/mode.txt` определяет режим:
+
+- `public` (по умолчанию) — только Internet Archive, легальный
+  контент
+- `private` — расширенный стек (libtorrent, Jackett, nodriver).
+  Экспериментально, не для обычных пользователей
+
+</details>
+
+<details>
+<summary><strong>Приложение зависает при переключении фильмов</strong></summary>
+
+Известное ограничение Windows Media Foundation (см.
+[Решение проблем](#решение-проблем)). Обход: подождать 2–3 секунды
+после закрытия перед запуском следующего, либо установить
+`QT_MEDIA_BACKEND=ffmpeg` перед запуском.
+
+</details>
+
+---
+
+## Разработка
+
+### Setup
+
+```bash
+git clone https://github.com/AkashaForge/ama-gi-player.git
+cd ama-gi-player
+python -m venv .venv
+.venv\Scripts\activate          # Windows
+# source .venv/bin/activate     # Linux
+pip install -r requirements.txt
+```
+
+Dev-инструменты (pytest, ruff, black, mypy) не входят в
+`requirements.txt` — установить отдельно:
+
+```bash
+pip install pytest ruff black mypy
+```
+
+### Запуск тестов
+
+```bash
+pytest
+```
+
+### Линтеры и форматирование
+
+Проект использует **ruff** (линтер) и **black** (форматтер).
+Настройки в `pyproject.toml`.
+
+```bash
+ruff check .
+ruff check . --fix
+black .
+```
+
+### Стиль коммитов
+
+Conventional Commits:
+
+```
+feat: add TorAPI source to coordinator
+fix: async_remove_torrent не удалял handles при cancel
+docs: обновить troubleshooting для Windows MF
+refactor: разбить StreamController на 3 подконтроллера
+```
+
+### Добавление новой зависимости
+
+Если действительно нужен новый пакет:
+
+1. Добавить с пином версии в `requirements.txt`
+2. Обновить этот README на **обоих** языках, если изменение
+   видно пользователям
+3. Запустить приложение и `pytest` — убедиться, что ничего
+   не сломалось
+
+---
+
 ## Структура проекта
 
 ```text
 ama-gi-player/
-├── controllers/          # Контроллеры ленты, деталей, стрима
-├── core/                 # Event loop, логирование, утилиты
-├── data/                 # Локальный каталог, кэш, постеры
-│   ├── whitelist_seed.db # Курированный каталог (в составе релиза)
-│   ├── whitelist.db      # Рабочая копия (создаётся при первом запуске)
-│   └── cache/            # Runtime-кэш постеров и метаданных
-├── database/             # SQLite-репозитории (каталог, история)
+├── controllers/              # Qt-контроллеры (state + UI ↔ services)
+│   ├── orchestrator.py       # Facade, DI-контейнер
+│   ├── feed_controller.py
+│   ├── details_controller.py
+│   └── stream/               # Stream subsystem
+│       ├── stream_controller.py
+│       ├── buffer_monitor.py
+│       ├── cascade.py
+│       └── fallback.py
+├── core/                     # Инфраструктура
+│   ├── config_loader.py
+│   ├── logging_setup.py
+│   ├── models.py
+│   └── utils.py
+├── data/                     # Локальные данные
+│   ├── whitelist_seed.db     # Каталог (в релизе)
+│   ├── whitelist.db          # Рабочая копия (создаётся из seed)
+│   ├── app_data.db           # История просмотров
+│   ├── cache/                # Runtime-кэш
+│   ├── mode.txt              # public / private
+│   └── sources.txt           # (private) пользовательские источники
+├── database/                 # SQLite-репозитории
+│   ├── connection.py
+│   ├── whitelist_db.py
+│   ├── whitelist_repo.py
+│   ├── history_repo.py
+│   ├── resolve_kp_ids.py
+│   └── whitelist_seed.py
 ├── docs/
-│   └── screenshots/      # Скриншоты для README
-├── search/               # Поиск по Internet Archive, агрегатор, фильтры
-├── services/             # Воспроизведение, Кинопоиск, очистка процессов
-├── tests/                # Набор тестов pytest
-├── tools/                # Утилиты для seed и каталога
-├── ui/                   # PyQt6-виджеты и стили
-├── legal_gate.py         # Окно дисклеймера
-├── legal_texts.py        # Тексты дисклеймера и политики
-├── main.py               # Точка входа
-├── config.py             # Конфигурация
+│   └── screenshots/
+├── search/                   # Поисковый конвейер
+│   ├── aggregator/           # Параллельный поиск
+│   │   ├── coordinator.py
+│   │   ├── language_filter.py
+│   │   ├── source_counters.py
+│   │   └── tasks/            # 6 источников (IA, Jackett, web, YTS, ...)
+│   ├── archive_org/          # Internet Archive
+│   │   ├── searcher.py
+│   │   ├── metadata.py
+│   │   └── language.py
+│   ├── web_fetcher/          # Парсинг сайтов
+│   │   ├── fetcher.py
+│   │   ├── http_cascade.py   # curl_cffi → cloudscraper → aiohttp
+│   │   ├── browser_fetcher.py
+│   │   └── html_parser.py
+│   ├── filters.py
+│   ├── jackett_client.py
+│   ├── prowlarr_client.py
+│   └── torznab_parser.py
+├── services/                 # Бизнес-логика
+│   ├── torrent/              # P2P streaming (private)
+│   │   ├── session/          # StreamSession подкомпоненты
+│   │   ├── http_range_server.py
+│   │   ├── piece_scheduler.py
+│   │   ├── piece_map.py
+│   │   ├── peer_monitor.py
+│   │   ├── lt_session.py
+│   │   ├── source_selector.py
+│   │   ├── swarm_grouper.py
+│   │   └── tracker_balancer.py
+│   ├── playback_controller.py
+│   ├── kp_service.py
+│   ├── balancer_client.py
+│   └── process_cleaner.py
+├── tests/
+│   └── test_smoke.py
+├── tools/                    # Утилиты сборки каталога
+│   ├── make_seed.py
+│   ├── enrich_whitelist.py
+│   ├── apply_seed.py
+│   ├── verify_whitelist.py
+│   ├── manage_whitelist.py
+│   └── cache_stats.py
+├── ui/                       # PyQt6-виджеты и стили
+│   ├── main_window.py
+│   ├── setup_wizard.py
+│   ├── source_picker_dialog.py
+│   ├── styles.qss
+│   └── widgets/
+├── legal_gate.py
+├── legal_texts.py
+├── switch_mode.py            # public ↔ private
+├── main.py
+├── config.py
+├── pyproject.toml
+├── nuitka-package-config.yml
 ├── requirements.txt
-└── bin/                  # Опциональные внешние утилиты (по умолчанию пусто)
+└── bin/                      # Опциональные внешние утилиты
 ```
+
+---
+
+## Планы
+
+Планируемые улучшения (не гарантированы, без сроков):
+
+### Ближайшее
+
+- [ ] Английская локализация интерфейса (i18n через `QTranslator`) —
+  сейчас EN/RU переключает только язык поиска
+- [ ] Тесты на fallback-логику (public retry, private auto-fallback)
+- [ ] Полный CI на Linux (сейчас экспериментальный)
+
+### Средний срок
+
+- [ ] Подпись кода (Windows) — убирает SmartScreen и часть
+  false-positive антивирусов
+- [ ] `QT_MEDIA_BACKEND=ffmpeg` по умолчанию на Windows — обходит
+  часть ограничений MF
+- [ ] Улучшение загрузки постеров (прогрессивная загрузка,
+  blurhash-плейсхолдеры)
+
+### Дальний срок
+
+- [ ] macOS сборка
+- [ ] ARM64 (Apple Silicon, Windows on ARM)
+- [ ] Система плагинов для источников (сейчас — `sources.txt`)
+
+Если хотите помочь — см. [Участие в разработке](#участие-в-разработке).
+
+---
+
+## Участие в разработке
+
+PR и Issues приветствуются. Перед крупным PR:
+
+1. Открыть issue с описанием идеи — обсудить подход
+2. Сделать fork и ветку от `main`
+3. Прогнать `pytest` и `ruff check .` локально
+4. Открыть PR с описанием и ссылкой на issue
+
+Подробности — в [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+Отправляя PR, вы соглашаетесь лицензировать свой вклад под
+**GPLv3**.
+
+### Хорошие первые задачи
+
+Issues с меткой
+[`good first issue`](https://github.com/AkashaForge/ama-gi-player/labels/good%20first%20issue)
+специально для новичков.
+
+---
+
+## Благодарности
+
+Проект стоит на плечах отличных open-source инструментов:
+
+- **[Internet Archive](https://archive.org)** — открытый архив с
+  миллионами произведений в public domain. Без него проекта бы
+  не было.
+- **[PyQt6](https://riverbankcomputing.com/software/pyqt/)** —
+  Qt bindings для Python.
+- **[qasync](https://github.com/CabbageDevelopment/qasync)** —
+  мост asyncio ↔ Qt event loop.
+- **[Nuitka](https://nuitka.net)** — Python → C компилятор.
+- **[libtorrent](https://libtorrent.org)** (rasterbar) —
+  BitTorrent-библиотека (private mode).
+- **[aiohttp](https://docs.aiohttp.org)** — асинхронный HTTP.
+- **[curl_cffi](https://github.com/lexiforest/curl_cffi)** —
+  TLS fingerprinting для CF bypass.
+- **[nodriver](https://github.com/ultrafunkamsterdam/nodriver)** —
+  headless Chrome без webdriver.
+- **[Kinopoisk Unofficial API](https://kinopoiskapiunofficial.tech)** —
+  опциональные метаданные.
+
+Отдельное спасибо:
+
+- Сообществу **Internet Archive** за открытые данные
+- Контрибьюторам PyQt6 и qasync за ответы на GitHub
+- Авторам фильмов в public domain — за культурное наследие
+
+### Иконки
+
+- [Feather Icons](https://feathericons.com) — UI-иконки
+  (лицензия MIT)
+- Emoji-флаги — системный шрифт
 
 ---
 
@@ -537,14 +1018,6 @@ Amagi-Player распространяется под **GNU General Public Licens
 - Источники по умолчанию — открытые архивы общественного
   достояния (Internet Archive).
 - Приложение работает локально, без аналитики и телеметрии.
-
----
-
-## Участие в разработке
-
-PR и Issues приветствуются. Подробности — в [`CONTRIBUTING.md`](CONTRIBUTING.md).
-
-Отправляя PR, вы соглашаетесь лицензировать свой вклад под **GPLv3**.
 
 ---
 
