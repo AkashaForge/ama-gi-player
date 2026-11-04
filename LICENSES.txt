@@ -9,39 +9,67 @@ Third-party components bundled with the application
 ====================================================================
 
 Amagi-Player uses the following third-party libraries
-(see requirements.txt and requirements-dev.txt):
+(see requirements.txt and pyproject.toml):
 
 Runtime dependencies:
 
-  - aiohttp          — Apache License 2.0
-                       https://github.com/aio-libs/aiohttp
+  - aiohttp            — Apache License 2.0
+                         https://github.com/aio-libs/aiohttp
 
-  - PyQt6            — GNU GPL v3.0 (or commercial license
-                       from Riverbank Computing)
-                       https://riverbankcomputing.com/software/pyqt/
+  - PyQt6              — GNU GPL v3.0 (or commercial license
+                         from Riverbank Computing)
+                         https://riverbankcomputing.com/software/pyqt/
+                         Compatible with Amagi-Player's GPLv3.
 
-  - qasync           — BSD 2-Clause
-                       https://github.com/CabbageDevelopment/qasync
+  - PyQt6-Qt6,         — Qt6 runtime: LGPL v3.0 (or GPL/commercial)
+    PyQt6-WebEngine,     https://www.qt.io/licensing/
+    PyQt6-WebEngine-Qt6  Compatible with GPLv3 (LGPL v3 can be used
+    PyQt6_sip            in GPLv3 projects). PyQt6_sip is part of
+                         Riverbank's PyQt6 distribution.
 
-  - libtorrent       — BSD 3-Clause
-                       https://github.com/arvidn/libtorrent
+  - qasync             — BSD 2-Clause
+                         https://github.com/CabbageDevelopment/qasync
 
-  - psutil           — BSD 3-Clause
-                       https://github.com/giampaolo/psutil
+  - libtorrent         — BSD 3-Clause
+                         https://github.com/arvidn/libtorrent
 
-  - nodriver         — MIT
-                       https://github.com/ultrafunkamsterdam/nodriver
+  - psutil             — BSD 3-Clause
+                         https://github.com/giampaolo/psutil
 
-  - websockets       — BSD 3-Clause
-                       https://github.com/python-websockets/websockets
+  - nodriver           — MIT
+                         https://github.com/ultrafunkamsterdam/nodriver
 
-  - FFmpeg           — LGPL 2.1+ / GPL 2+ (depends on the build)
-                       https://ffmpeg.org/legal.html
+  - websockets         — BSD 3-Clause
+                         https://github.com/python-websockets/websockets
+
+  - cloudscraper       — MIT
+                         https://github.com/VeNoMouS/cloudscraper
+
+  - curl_cffi          — MIT
+                         https://github.com/lexiforest/curl_cffi
+
+  - defusedxml         — PSF License (Python Software Foundation)
+                         https://github.com/tiran/defusedxml
+
+  - FFmpeg             — LGPL 2.1+ / GPL 2+ (depends on the build)
+                         https://ffmpeg.org/legal.html
+                         Bundled via Qt Multimedia (PyQt6-Qt6 on
+                         Windows ships with FFmpeg DLLs) or taken
+                         from the system on Linux.
 
 Development dependencies (not shipped in release builds):
 
-  - pytest           — MIT
-                       https://github.com/pytest-dev/pytest
+  - pytest             — MIT
+                         https://github.com/pytest-dev/pytest
+  - pytest-asyncio     — Apache 2.0
+  - pytest-qt          — MIT
+  - pytest-cov         — MIT
+  - ruff               — MIT
+  - black              — MIT
+  - mypy               — MIT
+
+None of the development dependencies are included in release
+archives — they are only used for local development and CI.
 
 All of the above licenses are compatible with the GNU GPL v3.0.
 
