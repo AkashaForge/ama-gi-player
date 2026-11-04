@@ -1,4 +1,11 @@
-"""AlertPump — читает pop_alerts() и раскидывает по обработчикам."""
+"""AlertPump — читает pop_alerts() и раскидывает по обработчикам.
+
+v2.0.24:
+  - stop() теперь async: yield перед task.cancel(), чтобы pump
+    успел обработать последнюю порцию pop_alerts (важно для
+    async_remove_torrent в StreamSession.cancel()).
+  - Логирование ошибок pop_alerts (раньше silently pass).
+"""
 import asyncio
 
 import libtorrent as lt
@@ -34,12 +41,34 @@ class AlertPump:
                         log.warning("ALERT: metadata_failed")
                     elif isinstance(alert, lt.torrent_error_alert):
                         log.error("ALERT: torrent_error: %s", alert.message())
-            except Exception:
-                pass
-            await asyncio.sleep(0.1)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.debug("alert_pump pop_alerts: %s", e)
+            try:
+                await asyncio.sleep(0.1)
+            except asyncio.CancelledError:
+                raise
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
+        """Async stop: yield перед cancel, чтобы pump успел доделать.
+
+        task.cancel() поднимает CancelledError в момент await
+        asyncio.sleep(0.1). Между этим моментом и cancel() pump
+        мог бы обработать ещё одну порцию pop_alerts — включая
+        async_remove_torrent из StreamSession.cancel(). Поэтому
+        сначала даём один тик (sleep 0.05), потом уже cancel.
+        """
         self._cancelled = True
+        # Даём pump один тик на финальный pop_alerts
+        try:
+            await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            raise
         if self._task and not self._task.done():
             self._task.cancel()
+            try:
+                await self._task
+            except (asyncio.CancelledError, Exception):
+                pass
             self._task = None

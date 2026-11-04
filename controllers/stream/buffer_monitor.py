@@ -1,7 +1,7 @@
 """BufferMonitor — watchdog для P2P и online-потоков."""
 import time
 
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QTimer, QUrl
 
 import config
 from core.logging_setup import get_logger
@@ -62,6 +62,23 @@ class BufferMonitor:
         self._stopped = True
         self._pending_since = None
 
+    def _safe_stop_player(self):
+        """Отложенная остановка QMediaPlayer.
+
+        player.stop() и setSource() на Windows MF синхронные и могут
+        блокировать main thread. Вызываем через QTimer.singleShot(0),
+        чтобы текущий QTimer timeout завершился без блокировки, а Qt
+        успел отрисовать UI между тиками.
+
+        Используем только setSource(QUrl()) — он деактивирует источник,
+        отпускает file handle и останавливает воспроизведение. Отдельный
+        stop() не нужен и только удлиняет блокировку.
+        """
+        try:
+            self.playback.player.setSource(QUrl())
+        except Exception as e:
+            log.debug("safe_stop_player: %s", e)
+
     # ==================================================================
     #  P2P
     # ==================================================================
@@ -84,10 +101,8 @@ class BufferMonitor:
                         stats.connected_peers)
             self._stopped = True
             self._pending_since = None
-            try:
-                self.playback.player.stop()
-            except Exception:
-                pass
+            # Отложенная остановка — не блокируем _check_p2p
+            QTimer.singleShot(0, self._safe_stop_player)
             self._on_fallback(force=True)
             return
 
@@ -100,12 +115,10 @@ class BufferMonitor:
             )
             if time.time() - self._pending_since > self.STOP_DELAY:
                 log.warning("Buffer %.0fs — stop", self.STOP_DELAY)
-                try:
-                    self.playback.player.stop()
-                except Exception:
-                    pass
                 self._stopped = True
                 self._pending_since = None
+                # Отложенная остановка — не блокируем _check_p2p
+                QTimer.singleShot(0, self._safe_stop_player)
         elif not buffering and self._stopped:
             log.info("Данные пошли — reload")
             try:

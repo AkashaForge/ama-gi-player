@@ -45,6 +45,7 @@ class PlaybackController(QObject):
         self.current_movie_title = ""
         self._is_fullscreen = False
         self._saved_geometry = None
+        self._error_emit_pending = False
 
         try:
             self.player.errorOccurred.connect(self._on_player_error)
@@ -64,12 +65,27 @@ class PlaybackController(QObject):
             self.main_window.keyPressEvent = self._handle_key_press
 
     def _on_player_error(self, error, error_string):
+        """Не эмитим demux_error синхронно.
+
+        На Windows Media Foundation player.errorOccurred приходит из
+        нативного callback. Синхронный demux_error.emit() →
+        fallback.on_demux_error() → player.stop() внутри MF callback →
+        может крешить нативный код (MF реентерабельный только в
+        определённых состояниях). Откладываем на следующий тик Qt.
+        """
         from core.logging_setup import get_logger
         try:
             get_logger("playback").warning("player error: %s %s",
                                              error, error_string)
         except Exception:
             pass
+        if self._error_emit_pending:
+            return
+        self._error_emit_pending = True
+        QTimer.singleShot(0, self._emit_demux_error)
+
+    def _emit_demux_error(self):
+        self._error_emit_pending = False
         self.demux_error.emit()
 
     def play_url(self, stream_url: str, movie_id: int, title: str):
@@ -121,6 +137,15 @@ class PlaybackController(QObject):
             self.player.setPosition(target_ms)
 
     def stop_stream(self, save: bool = False):
+        """Останавливает воспроизведение и отпускает file handle.
+
+        ВАЖНО: сначала setSource(QUrl()), потом stop().
+        setSource деактивирует источник → QMediaPlayer отпускает
+        file handle на Windows. Без этого libtorrent не может
+        удалить torrent (storage остаётся открытым на минуты).
+        stop() только сбрасывает позицию — на MF он может быть
+        медленнее и блокировать main thread.
+        """
         self._timer.stop()
         real_seconds = (max(0, self.player.position() // 1000)
                         if self.player.source().isValid() else 0)
@@ -128,8 +153,17 @@ class PlaybackController(QObject):
         if self._is_fullscreen:
             self.toggle_fullscreen()
 
-        self.player.stop()
-        self.player.setSource(QUrl())
+        # 1. Сначала отпускаем file handle
+        try:
+            self.player.setSource(QUrl())
+        except Exception:
+            pass
+        # 2. Затем stop() для сброса позиции
+        try:
+            self.player.stop()
+        except Exception:
+            pass
+
         self._current_url = ""
 
         if save and self.current_movie_id is not None and real_seconds > 5:
