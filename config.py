@@ -81,12 +81,32 @@ YTS_MAX_RETRIES = 2
 YTS_RETRY_DELAY = 2.0
 
 # ==============================================================================
-# TorAPI (русские трекеры) — URL из data/torapi_base.txt
+# TorAPI (русские трекеры) — URL из data/torapi_base.txt или .env
 # ==============================================================================
 TORAPI_ENABLED = True
 TORAPI_BASE_FILE = DATA_DIR / "torapi_base.txt"
 TORAPI_REQUEST_TIMEOUT = 15.0
 TORAPI_MAX_RESULTS = 30
+TORAPI_BASE_URL = ""
+
+
+def _load_torapi_base_url() -> str:
+    """Читает первый некомментированный URL из data/torapi_base.txt.
+
+    Файл скрывается/восстанавливается switch_mode.py. Если URL не
+    задан ни в .env, ни в файле — safe_torapi вернёт пустой список,
+    что эквивалентно «отключён».
+    """
+    try:
+        if TORAPI_BASE_FILE.exists():
+            for line in TORAPI_BASE_FILE.read_text(encoding="utf-8").splitlines():
+                s = line.strip()
+                if s and not s.startswith("#"):
+                    return s
+    except Exception:
+        pass
+    return ""
+
 
 # ==============================================================================
 # API KEYS
@@ -109,8 +129,14 @@ if env_path.exists():
                         KP_API_KEY = v
                     elif k == "ARIA2_SECRET":
                         ARIA2_SECRET = v
+                    elif k == "TORAPI_BASE_URL":
+                        TORAPI_BASE_URL = v
     except Exception as e:
         print(f"[CONFIG] .env: {e}")
+
+# Fallback: URL можно держать в data/torapi_base.txt
+if not TORAPI_BASE_URL:
+    TORAPI_BASE_URL = _load_torapi_base_url()
 
 if not ARIA2_SECRET:
     _sf = DATA_DIR / ".aria2_secret"

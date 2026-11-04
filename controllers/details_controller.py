@@ -4,6 +4,9 @@ v2.0.6:
   - Lucene-эскейпинг в _search_archive_identifier (было — только `"`);
   - проверка схемы poster_url (_try_kp_cover);
   - остальное как в v2.0.5.
+
+v2.0.7:
+  - handle_resume_dismiss подтверждает удаление через QMessageBox.
 """
 
 # Amagi-Player — desktop media player for public-domain content
@@ -27,6 +30,7 @@ import os
 import re
 
 import aiohttp
+from PyQt6.QtWidgets import QMessageBox
 
 import config
 from core.logging_setup import get_logger
@@ -528,6 +532,16 @@ class DetailsController:
         self.open(movie_id)
 
     def handle_resume_dismiss(self, movie_id: int):
+        reply = QMessageBox.question(
+            self.main_window,
+            "Очистить историю просмотра?",
+            "Удалить сохранённый прогресс этого фильма?\n"
+            "Островок «Продолжить просмотр» больше не появится.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
         HistoryRepository.clear_history_entry(movie_id)
         self.main_window.resume_island.hide()
 

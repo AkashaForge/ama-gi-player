@@ -90,10 +90,12 @@ _NEGATIVE_REGEX = re.compile(
     re.IGNORECASE,
 )
 
-# Слова, которые не встречаются в названиях фильмов как отдельные токены
-_NEGATIVE_SIMPLE = frozenset({
-    "mp3", "flac", "lossless", "pdf", "epub", "fb2", "tutorial",
-})
+# Слова-мусор. Ищем как отдельные токены (regex с \b), а не как подстроку —
+# иначе "pdf" матчится внутри "pdfmaker", "tutorial" внутри "tutorials".
+_NEGATIVE_SIMPLE_RE = re.compile(
+    r'\b(?:mp3|flac|lossless|pdf|epub|fb2|tutorial)\b',
+    re.IGNORECASE,
+)
 
 
 def is_safe_release(title: str, size: int = 0) -> bool:
@@ -113,7 +115,7 @@ def is_safe_release(title: str, size: int = 0) -> bool:
     if _NEGATIVE_REGEX.search(low):
         return False
 
-    if any(m in low for m in _NEGATIVE_SIMPLE):
+    if _NEGATIVE_SIMPLE_RE.search(low):
         return False
 
     if size and size < 300 * 1024 * 1024:

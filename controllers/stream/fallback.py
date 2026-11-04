@@ -181,16 +181,22 @@ class FallbackHandler:
             )
             return
 
+        # Ранжируем через публичный rank() — он ставит _score в каждый
+        # элемент и сортирует по убыванию. Берём лучший.
         try:
             sel = SourceSelector(
                 self.controller._current_year,
                 language=config.SEARCH_LANGUAGE,
             )
-            scored = [(sel.score(a), a) for a in alternatives]
-            scored.sort(key=lambda x: x[0], reverse=True)
-            next_src = scored[0][1]
-            next_score = scored[0][0]
-        except Exception:
+            ranked = sel.rank(alternatives)
+            if ranked:
+                next_src = ranked[0]
+                next_score = ranked[0].get("_score", 0)
+            else:
+                next_src = alternatives[0]
+                next_score = 0
+        except Exception as e:
+            log.debug("auto-fallback rank: %s", e)
             next_src = alternatives[0]
             next_score = 0
 

@@ -1,8 +1,9 @@
 """StreamController — координатор. ~150 строк."""
 import asyncio
 
-import config
+from PyQt6.QtWidgets import QMessageBox
 
+import config
 from controllers.stream.buffer_monitor import BufferMonitor
 from controllers.stream.cascade import CascadeExecutor
 from controllers.stream.fallback import FallbackHandler
@@ -186,6 +187,14 @@ class StreamController:
             self.loop.create_task(self.stream_session.cancel())
             self.stream_session = None
         self.main_window.player_page.loader_label.setText(f"ОШИБКА: {err}")
+        try:
+            QMessageBox.warning(
+                self.main_window,
+                "Ошибка воспроизведения",
+                f"Не удалось запустить поток:\n\n{err}",
+            )
+        except Exception as e:
+            log.debug("QMessageBox warning: %s", e)
 
     def _update_bar(self, progress_str: str, speed_str: str):
         try:
