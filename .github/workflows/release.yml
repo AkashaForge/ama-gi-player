@@ -88,8 +88,9 @@ jobs:
           $ErrorActionPreference = "Stop"
           if ("${{ github.event.inputs.tag }}" -ne "") { $tag = "${{ github.event.inputs.tag }}" } else { $tag = "$env:GITHUB_REF_NAME" }
           $version = $tag -replace '^v', ''
-          $cleanVersion = $version -replace '[-+].*$', ''
-          $parts = @($cleanVersion.Split('.'))
+          # Только ведущие числа через точку: "2.2.3.beta-1" -> "2.2.3", "2.2.3-beta.1" -> "2.2.3"
+          $numeric = $version -replace '[^0-9.].*$', ''
+          $parts = @($numeric.Split('.') | Where-Object { $_ -match '^\d+$' })
           while ($parts.Count -lt 4) { $parts += "0" }
           $version4 = ($parts | Select-Object -First 4) -join '.'
           "tag=$tag" >> $env:GITHUB_OUTPUT
@@ -149,9 +150,8 @@ jobs:
           $distSeed = Join-Path $distData "whitelist_seed.db"
 
           if (-not (Test-Path $distData)) { New-Item -ItemType Directory -Force -Path $distData | Out-Null }
-          if (-not (Test-Path $distSeed)) { throw "whitelist_seed.db missing in .dist/data — что-то совсем не так" }
+          if (-not (Test-Path $distSeed)) { throw "whitelist_seed.db missing in .dist/data" }
 
-          # Если whitelist.db нет в .dist — копируем из seed ПРЯМО ТУДА
           if (-not (Test-Path $distWhitelist)) {
             Write-Host "[WARN] whitelist.db not in .dist — copying from seed" -ForegroundColor Yellow
             Copy-Item $distSeed $distWhitelist -Force
@@ -196,6 +196,7 @@ jobs:
             "Mode: data\mode.txt -> public | private (default: public)"
           ) | Set-Content (Join-Path $d "README.txt") -Encoding UTF8
           Copy-Item "README.md" (Join-Path $d "README.md") -ErrorAction SilentlyContinue
+          Copy-Item "README.ru.md" (Join-Path $d "README.ru.md") -ErrorAction SilentlyContinue
           Copy-Item "LICENSE"   (Join-Path $d "LICENSE")   -ErrorAction SilentlyContinue
           Copy-Item "NOTICE"    (Join-Path $d "NOTICE")    -ErrorAction SilentlyContinue
 
@@ -397,19 +398,39 @@ jobs:
       - name: Determine version
         id: version
         run: |
-          TAG="${{ github.ref_name }}"
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
           VERSION="${TAG#v}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Determine release type
+        id: release_type
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          # Стабильный = ровно vX.Y.Z (три числа). Всё остальное → prerelease.
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "make_latest=true" >> "$GITHUB_OUTPUT"
+            echo "Release type: STABLE (latest)"
+          else
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "make_latest=false" >> "$GITHUB_OUTPUT"
+            echo "Release type: PRERELEASE"
+          fi
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          name: "Amagi-Player ${{ steps.version.outputs.tag }} (Alpha)"
+          name: "Amagi-Player ${{ steps.version.outputs.tag }}"
           generate_release_notes: true
           files: |
             artifacts/**/*.zip
             artifacts/**/*.tar.gz
           draft: false
-          prerelease: true
+          prerelease: ${{ steps.release_type.outputs.prerelease }}
+          make_latest: ${{ steps.release_type.outputs.make_latest }}
