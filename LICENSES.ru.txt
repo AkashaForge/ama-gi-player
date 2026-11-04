@@ -2,48 +2,83 @@ Amagi-Player распространяется под лицензией
 GNU General Public License v3.0.
 Полный текст: https://www.gnu.org/licenses/gpl-3.0.txt
 
-English version of this file: LICENSES.txt
+Английская версия этого файла: LICENSES.txt
 
 ====================================================================
 Сторонние компоненты, входящие в состав приложения
 ====================================================================
 
 Amagi-Player использует следующие сторонние библиотеки
-(см. requirements.txt и requirements-dev.txt):
+(см. requirements.txt и pyproject.toml):
 
 Runtime-зависимости:
 
-  - aiohttp          — Apache License 2.0
-                       https://github.com/aio-libs/aiohttp
+  - aiohttp            — Apache License 2.0
+                         https://github.com/aio-libs/aiohttp
 
-  - PyQt6            — GNU GPL v3.0 (или коммерческая лицензия
-                       Riverbank Computing)
-                       https://riverbankcomputing.com/software/pyqt/
+  - PyQt6              — GNU GPL v3.0 (или коммерческая лицензия
+                         от Riverbank Computing)
+                         https://riverbankcomputing.com/software/pyqt/
+                         Совместима с GPLv3-лицензией Amagi-Player.
 
-  - qasync           — BSD 2-Clause
-                       https://github.com/CabbageDevelopment/qasync
+  - PyQt6-Qt6,         — Qt6 runtime: LGPL v3.0 (или GPL/коммерческая)
+    PyQt6-WebEngine,     https://www.qt.io/licensing/
+    PyQt6-WebEngine-Qt6  Совместима с GPLv3 (LGPL v3 можно использовать
+    PyQt6_sip            в GPLv3-проектах). PyQt6_sip входит в состав
+                         дистрибутива PyQt6 от Riverbank.
 
-  - libtorrent       — BSD 3-Clause
-                       https://github.com/arvidn/libtorrent
+  - qasync             — BSD 2-Clause
+                         https://github.com/CabbageDevelopment/qasync
 
-  - psutil           — BSD 3-Clause
-                       https://github.com/giampaolo/psutil
+  - libtorrent         — BSD 3-Clause
+                         https://github.com/arvidn/libtorrent
 
-  - nodriver         — MIT
-                       https://github.com/ultrafunkamsterdam/nodriver
+  - psutil             — BSD 3-Clause
+                         https://github.com/giampaolo/psutil
 
-  - websockets       — BSD 3-Clause
-                       https://github.com/python-websockets/websockets
+  - nodriver           — MIT
+                         https://github.com/ultrafunkamsterdam/nodriver
 
-  - FFmpeg           — LGPL 2.1+ / GPL 2+ (зависит от сборки)
-                       https://ffmpeg.org/legal.html
+  - websockets         — BSD 3-Clause
+                         https://github.com/python-websockets/websockets
 
-Dev-зависимости (не входят в релизную сборку):
+  - cloudscraper       — MIT
+                         https://github.com/VeNoMouS/cloudscraper
 
-  - pytest           — MIT
-                       https://github.com/pytest-dev/pytest
+  - curl_cffi          — MIT
+                         https://github.com/lexiforest/curl_cffi
+
+  - defusedxml         — PSF License (Python Software Foundation)
+                         https://github.com/tiran/defusedxml
+
+  - FFmpeg             — LGPL 2.1+ / GPL 2+ (зависит от сборки)
+                         https://ffmpeg.org/legal.html
+                         Входит в состав Qt Multimedia (PyQt6-Qt6 на
+                         Windows поставляется с FFmpeg DLL) или
+                         берётся из системы на Linux.
+
+Dev-зависимости (не входят в релизные сборки):
+
+  - pytest             — MIT
+                         https://github.com/pytest-dev/pytest
+  - pytest-asyncio     — Apache 2.0
+  - pytest-qt          — MIT
+  - pytest-cov         — MIT
+  - ruff               — MIT
+  - black              — MIT
+  - mypy               — MIT
+
+Ни одна из dev-зависимостей не входит в релизные архивы —
+они используются только для локальной разработки и CI.
 
 Все перечисленные лицензии совместимы с GNU GPL v3.0.
 
-Полные тексты лицензий сторонних компонентов доступны по ссылкам
-выше, а также в исходных репозиториях соответствующих проектов.
+Полные тексты сторонних лицензий доступны по ссылкам
+выше, а также в исходных репозиториях соответствующих
+проектов.
+
+====================================================================
+English translation
+====================================================================
+
+Английский перевод: см. файл LICENSES.txt в корне репозитория.
