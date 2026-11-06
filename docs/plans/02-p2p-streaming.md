@@ -1522,15 +1522,15 @@ P2P. Всё вместе — полный сценарий.
 
 ## Чек-лист готовности
 
-- [ ] Phase -1: `libtorrent` установлен, все константы в config
-- [ ] Phase 0: `create_session(6881)` возвращает session
-- [ ] Phase 1: `force_deadline(5, 3)` → 3 вызова `set_piece_deadline`
-- [ ] Phase 2: `SourceSelector.rank()` отбрасывает CAM
-- [ ] Phase 3: `ReadyDetector.detect(30)` с живым магнитом → HandleInfo
-- [ ] Phase 4: `curl -r 0-1048575` → 206 + 1 MB
-- [ ] Phase 5: `cancel()` → `Session state before add: 0 torrents` при
+- [x] Phase -1: `libtorrent` установлен, все константы в config
+- [x] Phase 0: `create_session(6881)` возвращает session
+- [x] Phase 1: `force_deadline(5, 3)` → 3 вызова `set_piece_deadline`
+- [x] Phase 2: `SourceSelector.rank()` отбрасывает CAM
+- [x] Phase 3: `ReadyDetector.detect(30)` с живым магнитом → HandleInfo
+- [x] Phase 4: `curl -r 0-1048575` → 206 + 1 MB
+- [x] Phase 5: `cancel()` → `Session state before add: 0 torrents` при
       следующем start
-- [ ] Phase 6: клик «Start streaming» в private → видео играет
-- [ ] Phase 7: E2E, failure modes, no zombies
+- [x] Phase 6: клик «Start streaming» в private → видео играет
+- [x] Phase 7: E2E, failure modes, no zombies
 
 **Все ✅ → P2P работает.**
