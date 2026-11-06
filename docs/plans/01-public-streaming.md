@@ -1317,16 +1317,16 @@ feed; `Ctrl+C` → всё закрывается, нет зомби.
 
 ## Чек-лист готовности
 
-- [ ] Phase -1: stubs созданы, `import` работает
-- [ ] Phase -1: все константы `config.py` на месте
-- [ ] Phase 0: `python main.py` открывает пустое окно
-- [ ] Phase 1: `assert` на INSERT/SELECT проходят
-- [ ] Phase 2: IA-поиск возвращает результаты
-- [ ] Phase 3: клик «Запустить» → видео играет
-- [ ] Phase 4: все виджеты рендерятся, тема переключается
-- [ ] Phase 5: полный флоу работает
-- [ ] Phase 6: E2E, failure modes, no zombies
-- [ ] Phase 7: README, LICENSE
-- [ ] Phase 8: CI green, локальный build работает
+- [x] Phase -1: stubs созданы, `import` работает
+- [x] Phase -1: все константы `config.py` на месте
+- [x] Phase 0: `python main.py` открывает пустое окно
+- [x] Phase 1: `assert` на INSERT/SELECT проходят
+- [x] Phase 2: IA-поиск возвращает результаты
+- [x] Phase 3: клик «Запустить» → видео играет
+- [x] Phase 4: все виджеты рендерятся, тема переключается
+- [x] Phase 5: полный флоу работает
+- [x] Phase 6: E2E, failure modes, no zombies
+- [x] Phase 7: README, LICENSE
+- [x] Phase 8: CI green, локальный build работает
 
 **Все ✅ → план выполнен.**
