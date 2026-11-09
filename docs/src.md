@@ -122,7 +122,7 @@ Internet Archive неаккуратен: метаданные врут, один
 1. Пользователь нажимает кнопку EN (или RU).
 2. Кнопка меняет текст на RU (или EN).
 3. `config.SEARCH_LANGUAGE` обновляется.
-4. **Интерфейс остаётся на русском** — переключается только язык поиска (какие фильмы искать — английские или русские).
+4. **Интерфейс остаётся на русском** — переключается только язык поиска.
 
 #### UC-07: (PRIVATE) Стрим через P2P
 
@@ -130,7 +130,7 @@ Internet Archive неаккуратен: метаданные врут, один
 **Предусловие:** режим PRIVATE, Jackett/Prowlarr настроены
 **Основной поток:**
 1. Пользователь ищет фильм в ленте.
-2. «Запустить трансляцию» → параллельный поиск по 6 источникам (Jackett, web_fetcher, IA, balancers, TorAPI, YTS).
+2. «Запустить трансляцию» → параллельный поиск по 6 источникам.
 3. Выбор победителя по composite health score.
 4. HTTP Range сервер запущен, QMediaPlayer воспроизводит.
 5. Seek работает через piece scheduler с deadline'ами.
@@ -151,23 +151,20 @@ Internet Archive неаккуратен: метаданные врут, один
 | `title_ru` | TEXT | NOT NULL | — | Название на русском |
 | `title_en` | TEXT | | `''` | Название на английском (для поиска на IA) |
 | `year` | TEXT | | `''` | Год выпуска |
-| `archive_identifier` | TEXT | | `''` | ID на Internet Archive (для описания/постера/стрима) |
-| `added_at` | TIMESTAMP | | `CURRENT_TIMESTAMP` | Когда добавлен в каталог |
+| `archive_identifier` | TEXT | | `''` | ID на Internet Archive |
+| `added_at` | TIMESTAMP | | `CURRENT_TIMESTAMP` | Когда добавлен |
 | `available` | INTEGER | | `NULL` | `NULL` = не проверен, `1` = доступен, `0` = нет |
-| `description` | TEXT | | `''` | EN-описание (из IA), добавляется `enrich_whitelist.py` |
-| `description_ru` | TEXT | | `''` | RU-описание (из KP), добавляется `enrich_whitelist.py` |
+| `description` | TEXT | | `''` | EN-описание (из IA) |
+| `description_ru` | TEXT | | `''` | RU-описание (из KP) |
 | `poster_source` | TEXT | | `''` | `KP` / `IA-files` / `IA-thumb` / `none` / `existing` / `''` |
-| `enriched` | INTEGER | | `0` | `1` = обработан `enrich_whitelist.py` |
+| `enriched` | INTEGER | | `0` | `1` = обработан enrich |
 
-**Индексы:**
-- `idx_whitelist_available` на `available`
-- `idx_whitelist_title_ru` на `title_ru`
-- `idx_whitelist_title_en` на `title_en`
+**Индексы:** `idx_whitelist_available`, `idx_whitelist_title_ru`, `idx_whitelist_title_en`.
 
 **Особенности:**
-- `kp_id` может быть отрицательным — «pseudo-id» для фильмов без Кинопоиска (`-hash(title_en|year) mod 100_000_000`).
-- `available` — три состояния. В PUBLIC-режиме лента показывает `(available = 1 OR available IS NULL)`.
-- `description` vs `description_ru` — приоритет у `description_ru` (KP), fallback на `description` (IA).
+- `kp_id` может быть отрицательным — «pseudo-id» для фильмов без КП.
+- `available` — три состояния. В PUBLIC лента показывает `(available = 1 OR available IS NULL)`.
+- `description` vs `description_ru` — приоритет у `description_ru` (KP).
 - `poster_source` — откуда взят постер, для диагностики.
 
 ### 3.2. База `app_data.db` — история
@@ -177,13 +174,13 @@ Internet Archive неаккуратен: метаданные врут, один
 | Колонка | Тип | Ключ | Default | Описание |
 |---|---|---|---|---|
 | `kp_id` | INTEGER | **PRIMARY KEY** | — | ID фильма |
-| `movie_title` | TEXT | NOT NULL | — | Название для островка «Продолжить» |
+| `movie_title` | TEXT | NOT NULL | — | Название для островка |
 | `current_seconds` | INTEGER | NOT NULL | — | Позиция в секундах |
 | `updated_at` | TIMESTAMP | | `CURRENT_TIMESTAMP` | Последнее обновление |
 
 **Индекс:** `idx_history_updated` на `updated_at DESC`.
 
-**UPSERT с MAX:** при повторном сохранении `current_seconds = MAX(excluded.current_seconds, user_history.current_seconds)` — не сбрасывать больший прогресс меньшим.
+**UPSERT с MAX:** при повторном сохранении `current_seconds = MAX(excluded.current_seconds, user_history.current_seconds)`.
 
 #### Таблица `schema_version`
 
@@ -193,7 +190,7 @@ Internet Archive неаккуратен: метаданные врут, один
 
 ### 3.3. Связи между таблицами
 
-- `user_history.kp_id` → `movie_whitelist.kp_id` — **логическая связь, без физического FK**. Разные базы (`app_data.db` и `whitelist.db`), могут пересоздаваться независимо. Это осознанное решение: потеря истории при пересборке каталога приемлема.
+`user_history.kp_id` → `movie_whitelist.kp_id` — **логическая связь, без физического FK**. Разные базы, могут пересоздаваться независимо.
 
 ### 3.4. Кэши (файловая система)
 
@@ -258,7 +255,7 @@ Internet Archive неаккуратен: метаданные врут, один
 |---|---|
 | Exit button | «✕ ЗАКРЫТЬ ТРАНСЛЯЦИЮ» |
 | Video widget | QVideoWidget, чёрный фон |
-| Loader container | Лоадер с прогресс-баром, скрыт при воспроизведении |
+| Loader container | Лоадер с прогресс-баром |
 | Loader label | «ПОСЛЕДОВАТЕЛЬНАЯ БУФЕРИЗАЦИЯ P2P ПОТОКА...» |
 | P2P progress | QProgressBar, height 2px |
 | Timeline slider | 0..1000, маппинг в ms |
@@ -282,24 +279,24 @@ Internet Archive неаккуратен: метаданные врут, один
 
 | Диалог | Файл | Назначение |
 |---|---|---|
-| **LegalGateDialog** | `legal_gate.py` | Дисклеймер при первом запуске. Кнопка «Принять» → `QDialog.Accepted` |
-| **SourcePickerDialog** | `ui/source_picker_dialog.py` | Выбор альтернативы в PRIVATE. ListWidget + «Смотреть» + «Отмена» |
-| **P2PInitialSetupWizard** | `ui/setup_wizard.py` | Мастер настройки Jackett в PRIVATE. QWebEngineView + «Активировал трекеры» |
+| **LegalGateDialog** | `legal_gate.py` | Дисклеймер при первом запуске |
+| **SourcePickerDialog** | `ui/source_picker_dialog.py` | Выбор альтернативы в PRIVATE |
+| **P2PInitialSetupWizard** | `ui/setup_wizard.py` | Мастер настройки Jackett в PRIVATE |
 
 **QMessageBox (3 варианта):**
-1. **Подтверждение очистки островка** — `question`, Yes/No
-2. **Очистка истории в настройках** — `question` + `information` (результат)
-3. **О программе** — `about` (версия, лицензия, ссылка)
+1. Подтверждение очистки островка — `question`, Yes/No
+2. Очистка истории в настройках — `question` + `information`
+3. О программе — `about`
 
 ### 4.6. Требования к UI
 
 | ID | Требование | Статус |
 |---|---|---|
 | UI-01 | Две темы: тёмная OLED (#000000) и светлая Gallery Editorial (#F2EDE3) | ✅ |
-| UI-02 | Переключение темы — без перезапуска, все элементы обновляются | ✅ |
+| UI-02 | Переключение темы — без перезапуска | ✅ |
 | UI-03 | EN/RU переключает язык поиска, не язык интерфейса | ✅ |
 | UI-04 | Шрифт system-ui, размеры по макету | ✅ |
-| UI-05 | Адаптивность: 4 → 3 → 2 колонки при сужении окна | ✅ |
+| UI-05 | Адаптивность: 4 → 3 → 2 колонки | ✅ |
 | UI-06 | Диалоги модальные, кроме островка (overlay) | ✅ |
 
 ---
@@ -310,30 +307,30 @@ Internet Archive неаккуратен: метаданные врут, один
 
 | ID | Требование | Критерий приёмки | Статус |
 |---|---|---|---|
-| **F-01** | Лента из локального каталога, 20 карточек на страницу | Открыть → 20 карточек с постерами | ✅ |
-| **F-02** | Поиск по названию (RU/EN) и году, регистронезависимый для кириллицы | «МАТРИЦА» находит «Матрица» | ✅ |
+| **F-01** | Лента из локального каталога, 20 карточек | Открыть → 20 карточек с постерами | ✅ |
+| **F-02** | Поиск по названию (RU/EN) и году, регистронезависимый | «МАТРИЦА» находит «Матрица» | ✅ |
 | **F-03** | Пагинация: скролл вниз → следующая страница | После последней — «больше нет» | ✅ |
 | **F-04** | Постерный каскад: кэш → seed → IA thumbnail → KP | Постер ≤ 3 сек | ✅ |
-| **F-05** | Placeholder «ОБЛОЖКА НЕДОСТУПНА» при отсутствии постера | Placeholder виден | ✅ |
-| **F-06** | Каскад из 4 IA-запросов | Лог `IA query:` для каждого шага | ✅ |
+| **F-05** | Placeholder «ОБЛОЖКА НЕДОСТУПНА» | Placeholder виден | ✅ |
+| **F-06** | Каскад из 4 IA-запросов | Лог `IA query:` | ✅ |
 | **F-07** | Допуск по году ±2 | `year:[1919 TO 1923]` | ✅ |
 | **F-08** | Скоринг: language × 100 + title × 50 + popularity × 20 | Сортировка по score | ✅ |
 | **F-09** | Для фильмов до 1930 язык — не дисквалификатор (0.9) | «Nosferatu» проходит | ✅ |
 | **F-10** | Приоритет расширения: MP4 > WebM > MKV > M4V > OGV > MOV > AVI > WMV > MPG > MPEG | При равенстве — больший размер | ✅ |
-| **F-11** | Файлы вне [30 MB, 4 GB] игнорируются, трейлеры < 50 MB игнорируются | `no playable video` | ✅ |
+| **F-11** | Файлы вне [30 MB, 4 GB] и трейлеры < 50 MB игнорируются | `no playable video` | ✅ |
 | **F-12** | Если только «неудобные» форматы — берём лучший, логируем | `only unfriendly format` | ✅ |
 | **F-13** | При demux error — 1 retry через 5 сек, потом следующий direct_url | `public DEMUX → retry in 5s` | ✅ |
-| **F-14** | Если retry не помог и direct_url нет — «Все варианты испробованы» | Нет крэша | ✅ |
+| **F-14** | Если retry не помог — «Все варианты испробованы» | Нет крэша | ✅ |
 | **F-15** | До 12 кандидатов в P2P, группировка по info_hash | `Taking N candidates` | ✅ |
 | **F-16** | Победитель по composite score, grace 10 сек, margin ×2 | `First ready` | ✅ |
-| **F-17** | Мёртвые handles убиваются: no peers 10s / no meta 60s / no first 45s | `Kill {key}: reason` | ✅ |
+| **F-17** | Мёртвые handles: no peers 10s / no meta 60s / no first 45s | `Kill {key}: reason` | ✅ |
 | **F-18** | HTTP Range сервер на 127.0.0.1, Host-header → 403 | `Host: evil.com` → 403 | ✅ |
 | **F-19** | `set_piece_deadline(ms ≥ 100)`, lookahead 10, tail 20 | Seek ≤ 5 сек | ✅ |
 | **F-20** | `force_deadline` при каждом HTTP Range запросе | `force_deadline: piece=N` | ✅ |
 | **F-21** | `cancel()` освобождает handles за 15 сек + sync fallback | `Session state before add: 0` | ✅ |
-| **F-22** | Sync fallback `remove_torrent` если polling не помог | `sync remove для N handles` | ✅ |
+| **F-22** | Sync fallback `remove_torrent` | `sync remove для N handles` | ✅ |
 | **F-23** | `rmtree` в executor | Seek работает во время cleanup | ✅ |
-| **F-24** | 4 уровня fallback: online → public direct → P2P → private direct | Переход на следующий | ✅ |
+| **F-24** | 4 уровня fallback | Переход на следующий | ✅ |
 | **F-25** | PUBLIC: `_public_epoch` защищает от race | `stream reset (epoch X != Y)` | ✅ |
 | **F-26** | PUBLIC: skip на последнем → начинаем с первого | `начинаем с первого` | ✅ |
 | **F-27** | PRIVATE: demux → reload #1 через 5s → auto-fallback до 3 попыток | `auto-fallback [N/3]` | ✅ |
@@ -348,8 +345,8 @@ Internet Archive неаккуратен: метаданные врут, один
 | **F-36** | `switch_mode.py public` → файлы в `.bak`, `whitelist.db` из seed | Нет `sources.txt` | ✅ |
 | **F-37** | `switch_mode.py private` → восстановление из `.bak` | Файлы на месте | ✅ |
 | **F-38** | Режим читается из `data/mode.txt` при импорте | Перезапуск применяет | ✅ |
-| **F-39** | Без Chrome — браузерная фаза пропускается | `[Браузер не найден]` в логе | ✅ |
-| **F-40** | Без KP_API_KEY — работает с БД и IA | `[KP_API_KEY не задан]` в логе | ✅ |
+| **F-39** | Без Chrome — браузерная фаза пропускается | `[Браузер не найден]` | ✅ |
+| **F-40** | Без KP_API_KEY — работает с БД и IA | `[KP_API_KEY не задан]` | ✅ |
 | **F-41** | Ошибка торрента → «Ни один из N не начал качать» | Нет крэша | ✅ |
 | **F-42** | Без сети → «ФИЛЬМ НЕ НАЙДЕН» | Сообщение, не traceback | ✅ |
 
@@ -357,17 +354,18 @@ Internet Archive неаккуратен: метаданные врут, один
 
 | ID | Требование | Причина отсрочки |
 |---|---|---|
-| **F-W-01** | Retry 429/503 для IA Search | Не трогали `searcher.py` перед сдачей |
-| **F-W-02** | Ограничение размера ответа IA Search (5 MB) | Не критично, метаданные редко > 1 MB |
-| **F-W-03** | Retry БД при `database is locked` | WAL обычно решает |
-| **F-W-04** | Диалог при повреждении БД | Редкий случай |
-| **F-W-05** | Ограничение размера постера в runtime (5 MB) | В `enrich_whitelist.py` есть, в runtime нет |
-| **F-W-06** | Ограничение размера `.torrent` файла (10 MB) | Обычно < 1 MB |
-| **F-W-07** | Retry 5xx для IA Download (сейчас fallback сразу) | Fallback через direct_url работает |
-| **F-W-08** | Локализация UI на английский | EN/RU — это поиск, не UI |
-| **F-W-09** | Теги и категории в БД | Требует миграции схемы |
-| **F-W-10** | Горячие клавиши в плеере | UX-улучшение |
-| **F-W-11** | Ограничение размера ответа IA Metadata (10 MB) | Не критично, метаданные редко > 1 MB |
+| **F-W-01** | Retry 429/503 для IA Search | Не трогали `searcher.py` (W-01) |
+| **F-W-02** | Ограничение размера ответа IA Search (5 MB) | Не критично (W-03) |
+| **F-W-03** | Retry БД при `database is locked` | WAL решает (W-05) |
+| **F-W-04** | Диалог при повреждении БД | Редкий случай (W-06) |
+| **F-W-05** | Ограничение размера постера в runtime (5 MB) | В enrich есть, в runtime нет (W-07) |
+| **F-W-06** | Ограничение размера `.torrent` файла (10 MB) | Обычно < 1 MB (W-08) |
+| **F-W-07** | Retry 5xx для IA Download | Fallback работает, но не «retry 5xx» (W-20) |
+| **F-W-08** | Локализация UI на английский | EN/RU — поиск, не UI (W-21) |
+| **F-W-09** | Теги и категории в БД | Требует миграции (W-09) |
+| **F-W-10** | Горячие клавиши в плеере | UX-улучшение (W-10) |
+| **F-W-11** | Ограничение размера ответа IA Metadata (10 MB) | Не критично (W-04) |
+| **F-W-12** | Тесты на fallback-логику | Моки libtorrent — отдельная задача (W-11) |
 
 **Полное описание каждого — в `docs/roadmap.md`.**
 
@@ -437,7 +435,7 @@ Internet Archive неаккуратен: метаданные врут, один
 |---|---|---|---|
 | **API-06** | Endpoint | `https://archive.org/metadata/{identifier}` | ✅ |
 | **API-07** | Формат ответа | JSON, `files[]` (name, size, format), `metadata` (description, title, year) | ✅ |
-| **API-08** | Таймаут | 12 сек | ✅ |
+| **API-08** | Таймаут | 15 сек (`config.NETWORK_TIMEOUT` — наследуется от сессии) | ✅ |
 | **API-09** | Кэш | LRU 500 записей, TTL 24 часа | ✅ |
 | **API-10** | Обработка 404 | Return `None`, кэшировать `None` | ✅ |
 
@@ -475,17 +473,17 @@ Internet Archive неаккуратен: метаданные врут, один
 |---|---|---|---|
 | **API-28** | Endpoint | Из `TORAPI_BASE_URL` (`.env` или `data/torapi_base.txt`) | ✅ |
 | **API-29** | Таймаут | 15 сек | ✅ |
-| **API-30** | Обработка 402 | Лог WARNING, return `[]` (без retry) | ✅ |
+| **API-30** | Обработка 402 | Лог WARNING, return `[]` | ✅ |
 | **API-31** | Без URL | `safe_torapi` возвращает `[]` | ✅ |
 
-### 7.2. Желательные (🟡 план на будущее, в v2.x не реализованы)
+### 7.2. Желательные (🟡 план на будущее)
 
 | ID | Требование | Причина отсрочки |
 |---|---|---|
-| **API-11** | Обработка 5xx IA Metadata — **не** кэшировать `None` | `metadata.py` кэширует и 5xx (как 404) |
-| **API-19** | Rate limit Kinopoisk ≤ 1 запрос / 1.5 сек (в `kp_service`) | Throttle только в `feed_controller`, не в `kp_service` |
-| **API-20** | Обработка Kinopoisk 402 — cooldown 5 минут | Логирование есть, cooldown нет |
-| **API-21** | Обработка Kinopoisk 429 — cooldown 60 секунд | Только в `feed_controller`, не в `kp_service` |
+| **API-11** | Обработка 5xx IA Metadata — **не** кэшировать `None` | `metadata.py` кэширует и 5xx (W-12) |
+| **API-19** | Rate limit Kinopoisk ≤ 1 / 1.5 сек в `kp_service` | Throttle только в `feed_controller` (W-13) |
+| **API-20** | Обработка Kinopoisk 402 — cooldown 5 минут | Лог есть, cooldown нет (W-14) |
+| **API-21** | Обработка Kinopoisk 429 — cooldown 60 секунд | Только в `feed_controller` (W-15) |
 
 ### 7.3. Общие принципы (✅)
 
@@ -494,7 +492,7 @@ Internet Archive неаккуратен: метаданные врут, один
 | **API-32** | Все запросы через `aiohttp.ClientSession`, не sync | ✅ |
 | **API-33** | Все таймауты — из `config.py` | ✅ |
 | **API-34** | SSL verify всегда `True` | ✅ |
-| **API-35** | Никогда не падать на сетевой ошибке — return `[]` / `None` + лог | ✅ |
+| **API-35** | Никогда не падать на сетевой ошибке | ✅ |
 | **API-36** | Retry только для transient errors (timeout, 429, 503) | ✅ |
 | **API-37** | User-Agent `AmagiPlayer/2.0` из config | ✅ |
 
@@ -506,15 +504,15 @@ Internet Archive неаккуратен: метаданные врут, один
 
 | ID | Категория | Ошибка | Поведение | Лог | Пользователь видит | Статус |
 |---|---|---|---|---|---|---|
-| **ERR-01** | Сеть | Timeout | Return `[]`, не падать | WARNING | Ничего | ✅ |
+| **ERR-01** | Сеть | Timeout | Return `[]` | WARNING | Ничего | ✅ |
 | **ERR-02** | Сеть | DNS failure | Return `[]` | WARNING | Ничего | ✅ |
 | **ERR-03** | Сеть | Connection refused | Return `[]` | WARNING | Ничего | ✅ |
-| **ERR-04** | HTTP | 402 Payment Required | Не retry, отключить источник | WARNING | Ничего | ✅ |
-| **ERR-05** | HTTP | 416 Range Not Satisfiable | Лог, следующий источник | WARNING | «Переключение» | ✅ |
-| **ERR-06** | Парсинг | Битый JSON | Return `[]`, лог | WARNING | Ничего | ✅ |
-| **ERR-07** | Парсинг | Неожиданные поля | Игнорировать, лог | DEBUG | Ничего | ✅ |
-| **ERR-08** | Парсинг | XXE | `defusedxml` блокирует | ERROR | Ничего | ✅ |
-| **ERR-09** | ФС | Диск полон | Остановить загрузку | ERROR | «Недостаточно места» | ✅ |
+| **ERR-04** | HTTP | 402 | Не retry, отключить источник | WARNING | Ничего | ✅ |
+| **ERR-05** | HTTP | 416 | Лог, следующий источник | WARNING | «Переключение» | ✅ |
+| **ERR-06** | Парсинг | Битый JSON | Return `[]` | WARNING | Ничего | ✅ |
+| **ERR-07** | Парсинг | Неожиданные поля | Игнорировать | DEBUG | Ничего | ✅ |
+| **ERR-08** | Парсинг | XXE | `defusedxml` | ERROR | Ничего | ✅ |
+| **ERR-09** | ФС | Диск полон | Остановить | ERROR | «Недостаточно места» | ✅ |
 | **ERR-10** | ФС | Нет прав | Остановить | ERROR | «Нет доступа» | ✅ |
 | **ERR-11** | ФС | Path traversal | Отказ | ERROR | «Ошибка безопасности» | ✅ |
 | **ERR-12** | libtorrent | `metadata_failed` | Убить handle | WARNING | Ничего | ✅ |
@@ -522,9 +520,9 @@ Internet Archive неаккуратен: метаданные врут, один
 | **ERR-14** | libtorrent | `torrent_error` | Лог, продолжить | ERROR | Ничего | ✅ |
 | **ERR-15** | QMediaPlayer | demux error | 1 retry через 5s, потом fallback | WARNING | «Переключение» | ✅ |
 | **ERR-16** | QMediaPlayer | Неподдерживаемый кодек | Fallback | WARNING | «Переключение» | ✅ |
-| **ERR-17** | UI | Виджет удалён (`sip.isdeleted`) | Skip update | DEBUG | Ничего | ✅ |
+| **ERR-17** | UI | Виджет удалён | Skip update | DEBUG | Ничего | ✅ |
 | **ERR-18** | UI | `RuntimeError` reentrancy | `QTimer.singleShot(0, ...)` | ERROR | Ничего | ✅ |
-| **ERR-19** | Пользователь | Пустой запрос | Показать всю ленту | — | Лента | ✅ |
+| **ERR-19** | Пользователь | Пустой запрос | Вся лента | — | Лента | ✅ |
 | **ERR-20** | Пользователь | Неверный год | Игнорировать | DEBUG | Лента без фильтра | ✅ |
 | **ERR-21** | Пользователь | Запрос > 100 симв | Обрезать | DEBUG | Обрезанный | ✅ |
 
@@ -544,12 +542,12 @@ Internet Archive неаккуратен: метаданные врут, один
 | ID | Принцип | Статус |
 |---|---|---|
 | **ERR-P1** | Никогда не падать на сетевой ошибке | ✅ |
-| **ERR-P2** | Retry только для transient errors | ✅ |
-| **ERR-P3** | WARNING если пользователь не видит эффекта; ERROR — если видит | ✅ |
-| **ERR-P4** | Graceful degradation: один источник упал — остальные работают | ✅ |
-| **ERR-P5** | Fail fast для критичных: БД corrupt → диалог | ✅ |
-| **ERR-P6** | Пользовательские сообщения по-русски, без техдеталей | ✅ |
-| **ERR-P7** | Технические детали — в лог, не в UI | ✅ |
+| **ERR-P2** | Retry только для transient | ✅ |
+| **ERR-P3** | WARNING / ERROR по видимости | ✅ |
+| **ERR-P4** | Graceful degradation | ✅ |
+| **ERR-P5** | Fail fast для критичных | ✅ |
+| **ERR-P6** | Пользовательские сообщения по-русски | ✅ |
+| **ERR-P7** | Технические детали — в лог | ✅ |
 
 ---
 
@@ -559,12 +557,12 @@ Internet Archive неаккуратен: метаданные врут, один
 
 #### 9.1.1. Внешние API
 
-| ID | Что | Лимит | При превышении | Статус |
-|---|---|---|---|---|
-| **LIM-01** | Количество результатов IA (`rows`) | 30 | Фиксировано (`_FETCH_LIMIT`) | ✅ |
-| **LIM-02** | Финальный топ после скоринга | 15 | `_FINAL_LIMIT` | ✅ |
-| **LIM-05** | Размер ответа балансера | 2 MB | Обрезать, лог | ✅ |
-| **LIM-06** | Размер ответа tracker_balancer | 1 MB | Обрезать, лог | ✅ |
+| ID | Что | Лимит | Статус |
+|---|---|---|---|
+| **LIM-01** | Количество результатов IA (`rows`) | 30 | ✅ |
+| **LIM-02** | Финальный топ после скоринга | 15 | ✅ |
+| **LIM-05** | Размер ответа балансера | 2 MB | ✅ |
+| **LIM-06** | Размер ответа tracker_balancer | 1 MB | ✅ |
 
 #### 9.1.2. Кэш
 
@@ -594,18 +592,18 @@ Internet Archive неаккуратен: метаданные врут, один
 
 | ID | Что | Лимит | Статус |
 |---|---|---|---|
-| **LIM-21** | Описание (display) | 500 символов | ✅ |
+| **LIM-21** | Описание (display) | 450 символов (`_MAX_DESC_DISPLAY_CHARS` в `details_widget.py`) | ✅ |
 | **LIM-22** | Описание (storage) | 2000 символов | ✅ |
-| **LIM-23** | Название (карточка) | 200 символов | ✅ |
-| **LIM-24** | Поисковый запрос | 100 символов | ✅ |
 | **LIM-25** | Лог-файл | 10 MB × 3 файла | ✅ |
 
-### 9.2. Желательные (🟡 план на будущее, в v2.x не реализованы)
+### 9.2. Желательные (🟡 план на будущее)
 
 | ID | Требование | Причина отсрочки |
 |---|---|---|
-| **LIM-03** | Размер ответа Jackett/Prowlarr 2 MB | Нет проверки `content_length` в `jackett_client` |
-| **LIM-04** | Размер ответа TorAPI 2 MB | Нет проверки `content_length` в `torapi` |
+| **LIM-03** | Размер ответа Jackett/Prowlarr 2 MB | Нет проверки `content_length` (W-16) |
+| **LIM-04** | Размер ответа TorAPI 2 MB | Нет проверки `content_length` (W-17) |
+| **LIM-23** | Обрезка названия карточки до 200 символов | `card_widget` переносит, не обрезает (W-18) |
+| **LIM-24** | `search_bar.setMaxLength(100)` | Поле без лимита (W-19) |
 
 ### 9.3. Принципы
 
@@ -614,22 +612,22 @@ Internet Archive неаккуратен: метаданные врут, один
 | **LIM-P1** | Все лимиты — в `config.py` | ✅ |
 | **LIM-P2** | При превышении — не падать, логировать | ✅ |
 | **LIM-P3** | При изменении — обновлять SRS | ✅ |
-| **LIM-P4** | Пользователь видит только actionable сообщения | ✅ |
+| **LIM-P4** | Пользователь видит только actionable | ✅ |
 
 ---
 
 ## 10. Что НЕ входит (Out of Scope)
 
-Явно **не** реализуется в v2.x — осознанное решение:
+Явно **не** реализуется в v2.x:
 
 - macOS, мобильные платформы
 - Субтитры, выбор аудиодорожки
 - Chromecast, AirPlay, DLNA
 - Пользовательские аккаунты, облачная синхронизация
 - ML-рекомендации
-- Скачивание для офлайн (только стриминг)
+- Скачивание для офлайн
 - Code signing
-- Английский UI (EN/RU переключает поиск, не интерфейс)
+- Английский UI **как основной** (W-21 — как опция)
 - Взрослый контент / 18+
 - Пользовательские плейлисты
 - Поиск по режиссёру / актёру
@@ -645,7 +643,7 @@ Internet Archive неаккуратен: метаданные врут, один
 | `paintEvent` шум попиксельно | Только light theme + header | O(w·75) на resize |
 | `_read_json`/`_write_json` sync в `kp_service` | JSON 5–10 KB, миллисекунды | Блокировка loop ~40ms в PRIVATE |
 | N+1 в `_build_movies_from_whitelist` | 20 карточек — незаметно | 21 запрос вместо 1 |
-| Нет тестов на fallback | Моки libtorrent — отдельная задача | Непокрытая логика |
+| Нет тестов на fallback | Моки libtorrent — отдельная задача | Непокрытая логика (F-W-12) |
 | `print()` в `config.py` | `import config` до `setup_logging` | Логи до инициализации — в stdout |
 
 ---
@@ -671,7 +669,7 @@ Internet Archive неаккуратен: метаданные врут, один
 2. **Все ✅ нефункциональные** (N-01…N-20) выполнены
 3. **Все ✅ требования к API** (API-01…API-10, API-12…API-18, API-22…API-37) реализованы
 4. **Все ✅ требования к ошибкам** (ERR-01…ERR-27) покрыты
-5. **Все ✅ ограничения** (LIM-01, LIM-02, LIM-05…LIM-25) заданы в config и применяются
+5. **Все ✅ ограничения** (LIM-01, LIM-02, LIM-05…LIM-22, LIM-25) заданы в config и применяются
 6. **Схема БД** соответствует разделу 3
 7. **Все экраны** (раздел 4) реализованы
 8. **Сборка Nuitka** проходит, `.dist` содержит exe + data + ui
@@ -679,4 +677,4 @@ Internet Archive неаккуратен: метаданные врут, один
 10. **Документация** (README ×2, LICENSE, LICENSES ×2, NOTICE, README-LINUX, roadmap) в наличии
 11. **Демонстрация** на защите: public + private + переключение
 
-**🟡 Желательные требования (F-W-01…F-W-11, API-11, API-19, API-20, API-21, LIM-03, LIM-04) — план на будущее, не входят в критерии готовности v2.x. См. `docs/roadmap.md`.**
+**🟡 Желательные требования (F-W-01…F-W-12, API-11, API-19…API-21, LIM-03, LIM-04, LIM-23, LIM-24) — план на будущее, не входят в критерии готовности v2.x. См. `docs/roadmap.md`.**
