@@ -266,7 +266,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install nuitka ordered-set zstandard
+          pip install nuitka==2.6.7 ordered-set zstandard
 
       - name: Prepare whitelist.db BEFORE build (страховка №1)
         run: |
@@ -295,6 +295,7 @@ jobs:
           set -e
           python -m nuitka \
             --standalone \
+            --msvc=latest
             --enable-plugin=pyqt6 \
             --include-package=PyQt6 \
             --include-qt-plugins=multimedia \
